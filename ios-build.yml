@@ -1,0 +1,91 @@
+name: Build ReTripper iOS
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show build environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate --spec project.yml
+
+      - name: Confirm project and scheme
+        run: |
+          test -d ReTripper.xcodeproj
+          xcodebuild -list -project ReTripper.xcodeproj
+
+      - name: Build unsigned iOS app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ReTripper.xcodeproj \
+            -scheme ReTripper \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ReTripperDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build | tee "$RUNNER_TEMP/ReTripper-build.log"
+
+      - name: Package and verify unsigned IPA
+        run: |
+          set -euo pipefail
+
+          APP_PATH="$RUNNER_TEMP/ReTripperDerivedData/Build/Products/Release-iphoneos/ReTripper.app"
+          test -d "$APP_PATH"
+          test -f "$APP_PATH/Info.plist"
+
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")
+          if [ "$BUNDLE_ID" != "com.nonick20.retripper" ]; then
+            echo "Unexpected bundle identifier: $BUNDLE_ID"
+            exit 1
+          fi
+
+          mkdir -p Payload
+          ditto "$APP_PATH" "Payload/ReTripper.app"
+          ditto -c -k --sequesterRsrc --keepParent Payload ReTripper.ipa
+
+          unzip -t ReTripper.ipa
+          unzip -l ReTripper.ipa | grep 'Payload/ReTripper.app/Info.plist'
+          echo "Verified unsigned IPA: ReTripper.ipa"
+          echo "Bundle identifier: $BUNDLE_ID"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReTripper-unsigned-IPA
+          path: ReTripper.ipa
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload build log if build fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReTripper-build-log
+          path: ${{ runner.temp }}/ReTripper-build.log
+          if-no-files-found: ignore
+          retention-days: 7
