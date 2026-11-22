@@ -1,0 +1,109 @@
+# macOS Files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.Efuss
+Icon
+Icon-20x20.png
+Icon-32x32.png
+Icon-48x48.png
+Icon-64x64.png
+
+# Xcode Derived Data and Build Artifacts
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.statev3
+*.xccheckout
+*.xcuserdata/**
+build/
+*.build/
+*.derivedData/
+*.xcuserdata/
+
+# Swift Package Manager Build Artifacts
+Pods/
+*.swiftpm/
+*.build/
+.swiftdoc/
+.swiftmodule/
+*.xccopydone
+*.xcoutputdump
+
+# Environment and Local Configuration Secrets
+.env
+.env.local
+.env.*.local
+*.env
+secrets.json
+credentials.json
+config.production.json
+config.development.json
+*.pem
+*.key
+*.p12
+*.mobileprovision
+*.cer
+*.cert
+*.jks
+*.keystore
+
+# Private Signing Files and Certificates
+*.p8
+*.pfx
+*.pkcs12
+*.mobileprovision
+*.cer
+*.key
+*.privateKey
+*.publicKey
+*.pem
+*.crt
+*.der
+*.asc
+*.md5
+*.sha1
+*.sha256
+
+# Provisioning Profiles and Credentials
+*.provisionprofile
+*.provisioning_profile
+*.plist
+*.xcodeproj/xcshareddata/xcsigningcredentials.plist
+*.xcsigningcredentials.plist
+
+# Temporary Files and Logs
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.log
+*.out
+*.build.log
+*.error.log
+*.debug.log
+*.trace
+*.pid
+*.sock
+
+# IDE and Editor Specific
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swiftpm-xcworkspace
+*.xcworkspace
+
+# macOS Logs (optional - uncomment if needed)
+/var/log/*.log
+~/Library/Caches/com.apple.*.logs
+~/Library/Logs/
+
+# OS X Preferences (optional - uncomment if needed)
+~/Library/Preferences/com.apple.*.plist
