@@ -1,0 +1,37 @@
+# ReTripper iOS Project Configuration for XcodeGen
+# This file is used by GitHub Actions to generate the Xcode project on macOS runners.
+
+name: ReTripper
+
+platforms:
+  ios:
+    name: ReTripper
+    type: application
+    bundle_identifier: com.nonick20.retripper
+    deployment_target: "17.0"
+    
+    # Product configuration
+    product:
+      name: ReTripper
+      info_plist:
+        CFBundleName: ReTripper
+        CFBundleDisplayName: ReTripper
+        CFBundleIdentifier: com.nonick20.retripper
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations_iPad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        
+    # Build settings
+    build_settings:
+      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+      
+    # Target configuration for generic device build
+    targets:
+      - name: ReTripper
+        type: application
+        product: ReTripper

@@ -1,16 +1,14 @@
+# ReTripper - Git Ignore File
+# This file excludes build artifacts and generated files from version control.
+
 # macOS Files
 .DS_Store
 .AppleDouble
 .LSOverride
-._*
+.*
 .Spotlight-V100
 .Trashes
 .Efuss
-Icon
-Icon-20x20.png
-Icon-32x32.png
-Icon-48x48.png
-Icon-64x64.png
 
 # Xcode Derived Data and Build Artifacts
 DerivedData/
@@ -30,7 +28,7 @@ build/
 Pods/
 *.swiftpm/
 *.build/
-.swiftdoc/
+.swift-doc/
 .swiftmodule/
 *.xccopydone
 *.xcoutputdump
@@ -100,10 +98,3 @@ config.development.json
 *.swiftpm-xcworkspace
 *.xcworkspace
 
-# macOS Logs (optional - uncomment if needed)
-/var/log/*.log
-~/Library/Caches/com.apple.*.logs
-~/Library/Logs/
-
-# OS X Preferences (optional - uncomment if needed)
-~/Library/Preferences/com.apple.*.plist
