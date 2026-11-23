@@ -3,36 +3,36 @@
 
 name: ReTripper
 
-platforms:
-  ios:
-    name: ReTripper
+targets:
+  ReTripper:
     type: application
-    bundle_identifier: com.nonick20.retripper
-    deployment_target: "17.0"
-    
-    # Product configuration
-    product:
-      name: ReTripper
-      info_plist:
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nonick20.retripper
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+    info:
+      properties:
         CFBundleName: ReTripper
         CFBundleDisplayName: ReTripper
-        CFBundleIdentifier: com.nonick20.retripper
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        UISupportedInterfaceOrientations_iPad:
+        UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        
-    # Build settings
-    build_settings:
-      ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
-      
-    # Target configuration for generic device build
-    targets:
-      - name: ReTripper
-        type: application
-        product: ReTripper
-        scheme: {}
+
+schemes:
+  ReTripper:
+    build:
+      targets:
+        ReTripper: all
+    run:
+      config: Debug
+    archive:
+      config: Release
