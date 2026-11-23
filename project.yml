@@ -35,3 +35,4 @@ platforms:
       - name: ReTripper
         type: application
         product: ReTripper
+        scheme: {}
