@@ -15,6 +15,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.nonick20.retripper
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
     info:
+      path: App/Info.plist
       properties:
         CFBundleName: ReTripper
         CFBundleDisplayName: ReTripper
