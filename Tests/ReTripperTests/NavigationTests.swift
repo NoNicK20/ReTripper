@@ -111,10 +111,12 @@ final class FakePlaceSearch: PlaceSearchProvider {
 }
 
 @MainActor
-func makeNavigationManager(engine: FakeNavigationEngine = FakeNavigationEngine(),
-                           search: FakePlaceSearch = FakePlaceSearch()) -> NavigationManager {
+func makeNavigationManager(engine: FakeNavigationEngine? = nil,
+                           search: FakePlaceSearch? = nil) -> NavigationManager {
     let defaults = UserDefaults(suiteName: "nav-tests-" + UUID().uuidString)!
-    return NavigationManager(engine: engine, search: search, store: DestinationStore(defaults: defaults))
+    return NavigationManager(engine: engine ?? FakeNavigationEngine(),
+                             search: search ?? FakePlaceSearch(),
+                             store: DestinationStore(defaults: defaults))
 }
 
 @MainActor
