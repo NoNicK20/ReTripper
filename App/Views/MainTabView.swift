@@ -68,4 +68,5 @@ struct MainTabView: View {
 #Preview {
     MainTabView()
         .environmentObject(DataManager.shared)
+        .environmentObject(DashboardConnectionManager.shared)
 }

@@ -12,12 +12,14 @@ import SwiftUI
 @MainActor
 struct ReTripperApp: App {
     @StateObject private var dataManager = DataManager.shared
+    @StateObject private var connectionManager = DashboardConnectionManager.shared
     @StateObject private var appEnv = AppEnvironment.shared
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(dataManager)
+                .environmentObject(connectionManager)
                 .environmentObject(appEnv)
         }
     }

@@ -9,7 +9,9 @@ import SwiftUI
 
 struct GarageView: View {
     @EnvironmentObject private var dataManager: DataManager
+    @EnvironmentObject private var connectionManager: DashboardConnectionManager
     @State private var showingEditSheet = false
+    @State private var showingConnectSheet = false
 
     private var totalFuelLiters: Double {
         dataManager.fuelLogs.reduce(0) { $0 + $1.liters }
@@ -99,6 +101,27 @@ struct GarageView: View {
                                     isSet: true,
                                     accentColor: Theme.apexRed
                                 )
+                                DetailRow(
+                                    label: "Tripper Dash Link",
+                                    value: connectionManager.state.displayTitle,
+                                    isSet: connectionManager.isConnected,
+                                    accentColor: connectionManager.isConnected ? Theme.apexRed : nil
+                                )
+
+                                Button(action: { showingConnectSheet = true }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "dot.radiowaves.left.and.right")
+                                            .font(.system(size: 11, weight: .bold))
+                                        Text(connectionManager.isConnected ? "Manage Tripper Connection" : "Connect Tripper Dash")
+                                            .font(.system(size: 12, weight: .bold))
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundColor(Theme.textTertiary)
+                                    }
+                                    .foregroundColor(Theme.apexRed)
+                                    .padding(.top, 4)
+                                }
                             }
                         }
                         .darkCard(padding: 16)
@@ -170,6 +193,9 @@ struct GarageView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingEditSheet) {
                 EditMotorcycleSheet()
+            }
+            .sheet(isPresented: $showingConnectSheet) {
+                DashboardConnectSheet()
             }
         }
     }
@@ -361,4 +387,5 @@ struct EditMotorcycleSheet: View {
 #Preview {
     GarageView()
         .environmentObject(DataManager.shared)
+        .environmentObject(DashboardConnectionManager.shared)
 }

@@ -22,5 +22,6 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environmentObject(DataManager.shared)
+        .environmentObject(DashboardConnectionManager.shared)
         .environmentObject(AppEnvironment.shared)
 }
