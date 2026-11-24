@@ -15,7 +15,7 @@
 import Foundation
 import Security
 
-enum DashHandshakeError: Error, LocalizedError {
+enum DashHandshakeError: Error, LocalizedError, Equatable {
     case modulusWrongLength(Int)
     case secKeyCreationFailed
     case encryptionFailed(String)
