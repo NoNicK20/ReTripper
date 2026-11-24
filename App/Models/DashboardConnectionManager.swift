@@ -16,6 +16,9 @@ import Combine
 enum DashboardConnectionState: Equatable {
     case wifiDisconnected
     case joiningWifi(ssid: String)
+    /// iOS accepted the hotspot configuration, but association with the network
+    /// has NOT been confirmed (NEHotspotConfiguration success does not prove association).
+    case wifiConfigured(ssid: String)
     case wifiAssociated(ssid: String)
     case dashboardAuthRequired(ssid: String)
     case dashboardSessionEstablished(ssid: String)
@@ -27,6 +30,8 @@ enum DashboardConnectionState: Equatable {
             return "Disconnected"
         case .joiningWifi(let ssid):
             return "Joining \(ssid)..."
+        case .wifiConfigured(let ssid):
+            return "Wi-Fi Configured (\(ssid))"
         case .wifiAssociated(let ssid):
             return "Wi-Fi Associated (\(ssid))"
         case .dashboardAuthRequired(let ssid):
@@ -53,6 +58,22 @@ enum DashboardConnectionState: Equatable {
         }
         return false
     }
+
+    var ssid: String? {
+        switch self {
+        case .joiningWifi(let s), .wifiConfigured(let s), .wifiAssociated(let s),
+             .dashboardAuthRequired(let s), .dashboardSessionEstablished(let s):
+            return s
+        case .wifiDisconnected, .failed:
+            return nil
+        }
+    }
+}
+
+/// Result of probing for a Tripper Dash application protocol.
+enum DashboardProtocolSupport: Equatable {
+    /// No manufacturer-published or otherwise verified protocol is implemented.
+    case notVerified
 }
 
 @MainActor
@@ -63,6 +84,14 @@ class DashboardConnectionManager: ObservableObject {
     @Published var lastKnownSSID: String?
     @Published var diagnosticMessage: String?
     @Published var isVerifyingSession: Bool = false
+
+    /// Whether ReTripper has a verified way to talk to the Tripper Dash.
+    /// Royal Enfield has not published the Tripper Dash protocol, so this stays `.notVerified`.
+    let protocolSupport: DashboardProtocolSupport = .notVerified
+
+    /// True only when iOS has confirmed the phone is on the motorcycle Wi-Fi network.
+    /// This is Wi-Fi association only — it does NOT mean an authenticated dashboard session.
+    var isConnected: Bool { state.isAssociated }
 
     private let userDefaultsKey = "retripper_last_known_ssid"
 
@@ -104,7 +133,7 @@ class DashboardConnectionManager: ObservableObject {
                 if let error = error {
                     self.handleConfigurationError(error, ssid: cleanSSID)
                 } else {
-                    self.handleAssociationSuccess(ssid: cleanSSID)
+                    self.handleConfigurationAccepted(ssid: cleanSSID)
                 }
             }
         }
@@ -164,25 +193,42 @@ class DashboardConnectionManager: ObservableObject {
 
     // MARK: - Session Verification
     /// Validates genuine Tripper Dash session establishment after Wi-Fi association.
+    /// Attempts to establish an authenticated Tripper Dash session.
+    ///
+    /// ReTripper does not have a verified Tripper Dash protocol (no published endpoints,
+    /// packet formats or authentication). We therefore never report a session as established;
+    /// the state stays at Wi-Fi association and the diagnostics explain why.
     func verifyDashboardSession() {
         guard case .wifiAssociated(let ssid) = state else {
+            if case .wifiConfigured(let ssid) = state {
+                diagnosticMessage = "iOS accepted the Wi-Fi settings for \(ssid), but ReTripper has not confirmed the phone is on that network yet. Tap 'Confirm Wi-Fi' first."
+            }
             return
         }
 
-        self.isVerifyingSession = true
-        self.state = .dashboardAuthRequired(ssid: ssid)
-        self.diagnosticMessage = "Testing Tripper Dash interface on \(ssid)..."
+        switch protocolSupport {
+        case .notVerified:
+            isVerifyingSession = false
+            diagnosticMessage = "Wi-Fi link to \(ssid) is confirmed, but a dashboard session cannot be established: Royal Enfield has not published the Tripper Dash communication protocol, and ReTripper will not guess endpoints or credentials. Phone-side ride features keep working without it."
+        }
+    }
 
-        // Authentic interface verification: Checks TCP/HTTP endpoint on dashboard gateway
-        Task {
-            // Simulated probe of supported dashboard communication port (e.g. standard local gateway)
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-
-            await MainActor.run {
-                self.isVerifyingSession = false
-                // Genuine session establishment
-                self.state = .dashboardSessionEstablished(ssid: ssid)
-                self.diagnosticMessage = "Tripper Dash session established and active."
+    /// Confirms whether the phone is actually associated with the configured SSID.
+    /// Requires the Access Wi-Fi Information entitlement and location permission on a real device.
+    func confirmAssociation() {
+        guard let expected = state.ssid else { return }
+        diagnosticMessage = "Checking which Wi-Fi network the phone is using..."
+        NEHotspotNetwork.fetchCurrent { [weak self] network in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                if let network = network, network.ssid == expected {
+                    self.handleAssociationSuccess(ssid: expected)
+                } else if let network = network {
+                    self.state = .wifiConfigured(ssid: expected)
+                    self.diagnosticMessage = "Phone is currently on '\(network.ssid)', not '\(expected)'. Check iOS Settings ➔ Wi-Fi."
+                } else {
+                    self.diagnosticMessage = "iOS did not report the current Wi-Fi network. This needs the Access Wi-Fi Information entitlement (signed build) and location permission. Association for '\(expected)' is unconfirmed."
+                }
             }
         }
     }
@@ -215,6 +261,14 @@ class DashboardConnectionManager: ObservableObject {
     }
 
     // MARK: - Private Error Handling
+    private func handleConfigurationAccepted(ssid: String) {
+        self.lastKnownSSID = ssid
+        UserDefaults.standard.set(ssid, forKey: userDefaultsKey)
+        self.state = .wifiConfigured(ssid: ssid)
+        self.diagnosticMessage = "iOS accepted the Wi-Fi configuration for \(ssid). Confirming association..."
+        confirmAssociation()
+    }
+
     private func handleAssociationSuccess(ssid: String) {
         self.lastKnownSSID = ssid
         UserDefaults.standard.set(ssid, forKey: userDefaultsKey)

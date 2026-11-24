@@ -102,10 +102,14 @@ struct SettingsView: View {
                             SettingsRow(title: "Architecture", value: "Native Swift & SwiftUI")
                             SettingsRow(title: "Platform Target", value: "iOS 17.0+")
                             SettingsRow(title: "Data Storage", value: "Local Device Sandbox")
-                            SettingsRow(title: "Cloud & Network", value: "Offline-First (Zero Tracking)")
+                            SettingsRow(title: "Cloud & Network", value: "No tracking; maps use Apple/Google")
                             SettingsRow(title: "Version", value: "1.0 (Build 1)")
                         }
                         .darkCard(padding: 16)
+
+                        // Ride Mode reminders & integrations
+                        RideSettingsSection(alerts: ContextualAlertManager.shared,
+                                            google: GoogleNavigationController.shared)
 
                         // Data Management
                         VStack(alignment: .leading, spacing: 12) {
@@ -168,4 +172,40 @@ struct SettingsRow: View {
 #Preview {
     SettingsView()
         .environmentObject(DataManager.shared)
+}
+
+// MARK: - Ride Mode settings
+
+struct RideSettingsSection: View {
+    @ObservedObject var alerts: ContextualAlertManager
+    @ObservedObject var google: GoogleNavigationController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("RIDE MODE")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(Theme.textTertiary)
+                .tracking(1.2)
+
+            Stepper(value: $alerts.serviceIntervalKm, in: 1000...20000, step: 500) {
+                SettingsRow(title: "Service reminder every", value: String(format: "%.0f km", alerts.serviceIntervalKm))
+            }
+            Stepper(value: $alerts.fuelReminderKm, in: 50...600, step: 10) {
+                SettingsRow(title: "Fuel stop reminder after", value: String(format: "%.0f km", alerts.fuelReminderKm))
+            }
+            Text("Reminders use your own service and refuel logs. They never replace the motorcycle's warning lights.")
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textTertiary)
+
+            SettingsRow(title: "Google Maps", value: google.status == .ready ? "Ready" : "Not configured")
+            Text(google.status.summary)
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textTertiary)
+            SettingsRow(title: "Spotify", value: "Not configured")
+            SettingsRow(title: "Weather advisories", value: "No provider")
+            SettingsRow(title: "Vehicle telemetry", value: "Unavailable")
+        }
+        .darkCard(padding: 16)
+        .onAppear { google.refreshStatus() }
+    }
 }

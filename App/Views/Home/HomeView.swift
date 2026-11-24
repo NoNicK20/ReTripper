@@ -11,6 +11,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var dataManager: DataManager
     @EnvironmentObject private var connectionManager: DashboardConnectionManager
+    @EnvironmentObject private var appEnv: AppEnvironment
 
     @State private var showingFuelSheet = false
     @State private var showingServiceSheet = false
@@ -38,6 +39,44 @@ struct HomeView: View {
                             reading: dataManager.motorcycle.currentOdometer,
                             unit: dataManager.distanceUnit
                         )
+
+                        // Connected Ride Cockpit Hero Launcher
+                        Button(action: { appEnv.selectedTab = AppEnvironment.rideTab }) {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Theme.apexRed)
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "location.north.fill")
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundColor(Theme.textPrimary)
+                                }
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("START CONNECTED RIDE")
+                                        .font(.system(size: 13, weight: .black, design: .monospaced))
+                                        .foregroundColor(Theme.textPrimary)
+                                        .tracking(1.0)
+                                    Text("Map, Turn-by-Turn, Trip Meter, Compass & Music")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(Theme.textSecondary)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(Theme.apexRed)
+                            }
+                            .padding(12)
+                            .background(Theme.surface)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                                    .stroke(Theme.apexRed, lineWidth: 1.5)
+                            )
+                        }
+                        .buttonStyle(.plain)
 
                         // Quick Actions Bar
                         QuickActionButtons(
@@ -127,4 +166,6 @@ struct TripperDashStatusCard: View {
     HomeView()
         .environmentObject(DataManager.shared)
         .environmentObject(DashboardConnectionManager.shared)
+        .environmentObject(RideSessionManager.shared)
+        .environmentObject(AppEnvironment.shared)
 }

@@ -1,0 +1,9 @@
+// App.xcconfig — shared build settings (committed).
+// Credentials are NEVER stored here. Put them in Config/Secrets.xcconfig,
+// which is git-ignored. Copy Config/Secrets.example.xcconfig to start.
+// With no secrets file the app builds and falls back to Apple Maps (MapKit).
+
+GOOGLE_MAPS_API_KEY =
+SPOTIFY_CLIENT_ID =
+
+#include? "Secrets.xcconfig"

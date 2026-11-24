@@ -35,6 +35,14 @@ struct RideLog: Identifiable, Codable, Equatable {
     var durationMinutes: Int = 0
     var endingOdometer: Double = 0.0
     var notes: String = ""
+    // Phone-GPS ride statistics (optional so older saved rides still decode).
+    var movingMinutes: Int? = nil
+    var averageMovingSpeedKmh: Double? = nil
+    var maxSpeedKmh: Double? = nil
+    var elevationGainMeters: Double? = nil
+    var route: [RoutePoint]? = nil
+    /// "phone-gps" for rides recorded in Ride Mode; nil for manual entries.
+    var source: String? = nil
 }
 
 enum ActivityType {

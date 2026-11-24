@@ -23,5 +23,6 @@ struct ContentView: View {
     ContentView()
         .environmentObject(DataManager.shared)
         .environmentObject(DashboardConnectionManager.shared)
+        .environmentObject(RideSessionManager.shared)
         .environmentObject(AppEnvironment.shared)
 }

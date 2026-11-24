@@ -1,7 +1,13 @@
 # ReTripper iOS Project Configuration for XcodeGen
 # This file is used by GitHub Actions to generate the Xcode project on macOS runners.
+# It builds WITHOUT Google Maps or Spotify credentials (Apple Maps fallback).
+# project.google.yml extends this spec with the Google Navigation SDK.
 
 name: ReTripper
+
+options:
+  deploymentTarget:
+    iOS: "17.0"
 
 targets:
   ReTripper:
@@ -10,10 +16,14 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - App
+    configFiles:
+      Debug: Config/App.xcconfig
+      Release: Config/App.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nonick20.retripper
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: YES
+        CODE_SIGN_ENTITLEMENTS: App/ReTripper.entitlements
     info:
       path: App/Info.plist
       properties:
@@ -21,12 +31,39 @@ targets:
         CFBundleDisplayName: ReTripper
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        # Build-time values from Config/App.xcconfig + git-ignored Config/Secrets.xcconfig.
+        GMSApiKey: $(GOOGLE_MAPS_API_KEY)
+        SpotifyClientID: $(SPOTIFY_CLIENT_ID)
+        CFBundleURLTypes:
+          - CFBundleURLName: com.nonick20.retripper.destination
+            CFBundleURLSchemes:
+              - retripper
+        NSCameraUsageDescription: "ReTripper uses the camera only to scan the Wi-Fi QR code shown on your motorcycle's Tripper Dash."
+        NSLocationWhenInUseUsageDescription: "ReTripper uses your location to record ride distance and time, show your position on the map, give turn-by-turn directions and show your compass course."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "ReTripper keeps recording your ride and guiding you while the screen is locked. Location is never shared or uploaded by ReTripper."
+        NSAppleMusicUsageDescription: "ReTripper shows the current Apple Music track and lets you play, pause and skip during rides."
+        UIBackgroundModes:
+          - location
+          - audio
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  ReTripperTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - Tests/ReTripperTests
+    dependencies:
+      - target: ReTripper
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nonick20.retripper.tests
+        GENERATE_INFOPLIST_FILE: YES
 
 schemes:
   ReTripper:
@@ -35,5 +72,9 @@ schemes:
         ReTripper: all
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - ReTripperTests
     archive:
       config: Release

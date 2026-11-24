@@ -196,9 +196,26 @@ struct ConnectionStatusCard: View {
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textSecondary)
 
+                case .wifiConfigured(let ssid):
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("iOS accepted the Wi-Fi settings for '\(ssid)'. That alone does not prove the phone joined the network.")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textSecondary)
+
+                        Button(action: { connectionManager.confirmAssociation() }) {
+                            Text("Confirm Wi-Fi")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(Theme.textPrimary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Theme.surfaceElevated)
+                                .clipShape(Capsule())
+                        }
+                    }
+
                 case .wifiAssociated(let ssid):
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Wi-Fi network '\(ssid)' associated. Ready to verify dashboard communication.")
+                        Text("Phone is on Wi-Fi network '\(ssid)'. No dashboard session: the Tripper Dash protocol is not published, so data exchange is unavailable.")
                             .font(.system(size: 12))
                             .foregroundColor(Theme.textSecondary)
 
@@ -208,7 +225,7 @@ struct ConnectionStatusCard: View {
                                     ProgressView()
                                         .tint(.white)
                                 }
-                                Text("Establish Dashboard Session")
+                                Text("Check Dashboard Session")
                                     .font(.system(size: 13, weight: .bold))
                             }
                             .foregroundColor(Theme.textPrimary)
@@ -237,7 +254,7 @@ struct ConnectionStatusCard: View {
                 }
             }
 
-            if connectionManager.state.isAssociated {
+            if connectionManager.state.isAssociated || connectionManager.state.ssid != nil {
                 Button(action: { connectionManager.disconnect() }) {
                     Text("Disconnect Session")
                         .font(.system(size: 12, weight: .medium))
@@ -255,7 +272,7 @@ struct StatusIndicator: View {
     private var color: Color {
         switch state {
         case .wifiDisconnected: return Theme.textTertiary
-        case .joiningWifi, .dashboardAuthRequired: return Theme.textSecondary
+        case .joiningWifi, .wifiConfigured, .dashboardAuthRequired: return Theme.textSecondary
         case .wifiAssociated: return Theme.textPrimary
         case .dashboardSessionEstablished: return Theme.apexRed
         case .failed: return Theme.apexRedDark
@@ -394,25 +411,21 @@ struct QRCodeScanPanel: View {
                 .font(.system(size: 12))
                 .foregroundColor(Theme.textSecondary)
 
-            // Simulated / Direct QR Payload Input
+            // Live Camera Viewfinder & Direct Payload Fallback
             VStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .fill(Theme.surfaceSecondary)
-                        .frame(height: 140)
+                        .frame(height: 240)
+                        .clipped()
+                        .overlay(
+                            QRScannerView(onCodeScanned: onScanPayload)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        )
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .stroke(Theme.borderSubtle, lineWidth: 1)
                         )
-
-                    VStack(spacing: 8) {
-                        Image(systemName: "qrcode.viewfinder")
-                            .font(.system(size: 42))
-                            .foregroundColor(Theme.apexRed)
-                        Text("Point camera at Tripper Dash screen")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(Theme.textSecondary)
-                    }
                 }
 
                 VStack(alignment: .leading, spacing: 6) {

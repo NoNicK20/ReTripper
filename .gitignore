@@ -98,3 +98,9 @@ config.development.json
 *.swiftpm-xcworkspace
 *.xcworkspace
 
+
+# Local backup of the earlier uncommitted Phase 3 draft (not compiled, not committed)
+_Phase3DraftBackup/
+
+# Local secrets (Google Maps / Spotify keys)
+Config/Secrets.xcconfig

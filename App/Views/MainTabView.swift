@@ -9,7 +9,7 @@ import SwiftUI
 
 @MainActor
 struct MainTabView: View {
-    @State private var selectedTab: Int = 0
+    @EnvironmentObject private var appEnv: AppEnvironment
 
     init() {
         // Configure standard tab bar appearance for dark theme
@@ -36,30 +36,36 @@ struct MainTabView: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: $appEnv.selectedTab) {
             HomeView()
                 .tabItem {
                     Label("Home", systemImage: "house.fill")
                 }
                 .tag(0)
 
+            RideModeView()
+                .tabItem {
+                    Label("Ride", systemImage: "location.north.circle.fill")
+                }
+                .tag(1)
+
             GarageView()
                 .tabItem {
                     Label("Garage", systemImage: "motorcycle.fill")
                 }
-                .tag(1)
+                .tag(2)
 
             RidesView()
                 .tabItem {
                     Label("Rides", systemImage: "flag.checkered")
                 }
-                .tag(2)
+                .tag(3)
 
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
-                .tag(3)
+                .tag(4)
         }
         .tint(Theme.apexRed)
     }
@@ -69,4 +75,6 @@ struct MainTabView: View {
     MainTabView()
         .environmentObject(DataManager.shared)
         .environmentObject(DashboardConnectionManager.shared)
+        .environmentObject(RideSessionManager.shared)
+        .environmentObject(AppEnvironment.shared)
 }

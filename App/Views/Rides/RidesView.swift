@@ -200,6 +200,30 @@ struct RideCard: View {
                 }
             }
 
+            if ride.source == "phone-gps" {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 12) {
+                        if let moving = ride.movingMinutes {
+                            Text("Moving \(moving) min")
+                        }
+                        if let avg = ride.averageMovingSpeedKmh {
+                            Text(String(format: "Avg %.0f km/h", avg))
+                        }
+                        if let gain = ride.elevationGainMeters {
+                            Text(String(format: "+%.0f m", gain))
+                        }
+                        if let points = ride.route?.count, points > 1 {
+                            Text("\(points) GPS pts")
+                        }
+                    }
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Theme.textSecondary)
+                    Text("PHONE GPS DATA")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.textTertiary)
+                }
+            }
+
             if !ride.notes.isEmpty {
                 Text(ride.notes)
                     .font(.system(size: 12))
