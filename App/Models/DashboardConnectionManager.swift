@@ -113,14 +113,27 @@ class DashboardConnectionManager: ObservableObject {
         }
 
         self.state = .joiningWifi(ssid: cleanSSID)
-        self.diagnosticMessage = "Requesting system Wi-Fi association with \(cleanSSID)..."
+
+        // Tripper Dash access points all use one fixed WPA2 password. Unless the
+        // rider typed a custom one, use that standard password for RE_ networks.
+        let customPassword = password?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let passphrase: String?
+        if let custom = customPassword, !custom.isEmpty {
+            passphrase = custom
+        } else if DashboardWiFi.looksLikeTripperSSID(cleanSSID) {
+            passphrase = DashboardWiFi.tripperPassphrase
+        } else {
+            passphrase = nil
+        }
+
+        self.diagnosticMessage = passphrase == nil
+            ? "Joining open network \(cleanSSID)..."
+            : "Joining \(cleanSSID) with the standard Tripper Wi-Fi password..."
 
         let configuration: NEHotspotConfiguration
-        if let pwd = password, !pwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Password-protected network
-            configuration = NEHotspotConfiguration(ssid: cleanSSID, passphrase: pwd, isWEP: false)
+        if let passphrase {
+            configuration = NEHotspotConfiguration(ssid: cleanSSID, passphrase: passphrase, isWEP: false)
         } else {
-            // Passwordless / Open network (Default for motorcycle hotspots)
             configuration = NEHotspotConfiguration(ssid: cleanSSID)
         }
 
@@ -149,22 +162,11 @@ class DashboardConnectionManager: ObservableObject {
             return
         }
 
-        // Parse standard Wi-Fi QR format: WIFI:S:RE_TRIPPER_XXXX;T:WPA;P:password;; or raw SSID
-        var extractedSSID: String = trimmed
-        var extractedPassword: String? = nil
-
-        if trimmed.hasPrefix("WIFI:") || trimmed.hasPrefix("wifi:") {
-            let components = trimmed.components(separatedBy: ";")
-            for comp in components {
-                if comp.hasPrefix("S:") || comp.hasPrefix("s:") {
-                    extractedSSID = String(comp.dropFirst(2))
-                } else if comp.hasPrefix("P:") || comp.hasPrefix("p:") {
-                    extractedPassword = String(comp.dropFirst(2))
-                }
-            }
+        if let wifi = DashboardPairingText.parseWiFiPayload(trimmed) {
+            connectViaManualSSID(ssid: wifi.ssid, password: wifi.password)
+        } else {
+            connectViaManualSSID(ssid: DashboardPairingText.extractSSID(from: trimmed) ?? trimmed, password: nil)
         }
-
-        connectViaManualSSID(ssid: extractedSSID, password: extractedPassword)
     }
 
     // MARK: - Entry Point 3: Existing Wi-Fi Connection (iOS Settings)
@@ -215,19 +217,28 @@ class DashboardConnectionManager: ObservableObject {
 
     /// Confirms whether the phone is actually associated with the configured SSID.
     /// Requires the Access Wi-Fi Information entitlement and location permission on a real device.
-    func confirmAssociation() {
+    func confirmAssociation(attempt: Int = 1) {
         guard let expected = state.ssid else { return }
-        diagnosticMessage = "Checking which Wi-Fi network the phone is using..."
+        let maxAttempts = 4
+        diagnosticMessage = "Checking which Wi-Fi network the phone is using (try \(attempt) of \(maxAttempts))..."
         NEHotspotNetwork.fetchCurrent { [weak self] network in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
+                guard let self = self, self.state.ssid == expected else { return }
                 if let network = network, network.ssid == expected {
                     self.handleAssociationSuccess(ssid: expected)
-                } else if let network = network {
-                    self.state = .wifiConfigured(ssid: expected)
-                    self.diagnosticMessage = "Phone is currently on '\(network.ssid)', not '\(expected)'. Check iOS Settings ➔ Wi-Fi."
+                    return
+                }
+                // Joining a network takes a few seconds after iOS accepts the settings.
+                if attempt < maxAttempts {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    self.confirmAssociation(attempt: attempt + 1)
+                    return
+                }
+                self.state = .wifiConfigured(ssid: expected)
+                if let network = network {
+                    self.diagnosticMessage = "The phone is on '\(network.ssid)', not '\(expected)'. iOS did not switch to the motorcycle network. Check that the name matches the dash exactly (letters, numbers, underscores) and that the dash is showing its network name."
                 } else {
-                    self.diagnosticMessage = "iOS did not report the current Wi-Fi network. This needs the Access Wi-Fi Information entitlement (signed build) and location permission. Association for '\(expected)' is unconfirmed."
+                    self.diagnosticMessage = "ReTripper can't read which Wi-Fi the phone is on (iOS only allows this for builds signed with the Access Wi-Fi Information capability, with location allowed). Open iPhone Settings ➔ Wi-Fi: if '\(expected)' has a tick, the phone joined. If iOS said 'Unable to join', the dash probably needs a password that ReTripper does not have."
                 }
             }
         }
@@ -282,31 +293,34 @@ class DashboardConnectionManager: ObservableObject {
     private func handleConfigurationError(_ error: Error, ssid: String) {
         let nsError = error as NSError
 
-        // Check for NEHotspotConfigurationError cases
         if nsError.domain == NEHotspotConfigurationErrorDomain {
-            switch nsError.code {
-            case 8, 13: // alreadyAssociated
+            switch HotspotApplyOutcome.classify(code: nsError.code) {
+            case .alreadyConnected:
                 self.handleAssociationSuccess(ssid: ssid)
-                self.diagnosticMessage = "Already associated with \(ssid)."
+                self.diagnosticMessage = "Already connected to \(ssid)."
                 return
-            case 7: // userCanceled / userDenied
+            case .userDeclined:
                 self.state = .wifiDisconnected
-                self.diagnosticMessage = "Wi-Fi association request was declined in the system dialog."
+                self.diagnosticMessage = "You tapped Cancel on iPhone's 'join Wi-Fi network' question."
                 return
-            case 1, 2, 3: // invalid, invalidSSID, invalidPassphrase
-                self.state = .failed(error: "Invalid network configuration or password.")
-                self.diagnosticMessage = "The entered SSID or password does not match the network parameters."
+            case .badNameOrPassword:
+                self.state = .failed(error: "iOS rejected the network name or password.")
+                self.diagnosticMessage = "iOS rejected the network name or password for '\(ssid)'. A Wi-Fi password must be 8 to 63 characters."
                 return
-            case 10: // networkNotFound
-                self.state = .failed(error: "Motorcycle network not found.")
-                self.diagnosticMessage = "The hotspot '\(ssid)' was not detected. Ensure your motorcycle ignition and Tripper Dash Wi-Fi are turned on."
+            case .notAllowedForThisBuild:
+                self.state = .failed(error: "iOS refused the Wi-Fi request.")
+                self.diagnosticMessage = "iOS refused to let ReTripper set up Wi-Fi (error \(nsError.code)). This usually means the installed app was not signed with Apple's Hotspot Configuration capability."
                 return
-            default:
+            case .appNotInForeground:
+                self.state = .failed(error: "ReTripper must be open on screen.")
+                self.diagnosticMessage = "Keep ReTripper open on screen while it joins the motorcycle Wi-Fi, then try again."
+                return
+            case .otherFailure:
                 break
             }
         }
 
         self.state = .failed(error: error.localizedDescription)
-        self.diagnosticMessage = "Connection failed: \(error.localizedDescription). You can retry without restarting."
+        self.diagnosticMessage = "Connection failed (\(nsError.domain) \(nsError.code)): \(error.localizedDescription). If this keeps happening, check that the installed app was signed with the Hotspot Configuration capability."
     }
 }

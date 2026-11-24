@@ -5,7 +5,7 @@
 //  Tripper Dash Pairing & Connectivity Sheet.
 //  Provides three independent entry points:
 //  1. Manual SSID Entry (P0)
-//  2. Scan Dashboard QR Code
+//  2. Scan the network name shown on the dash with the camera (text, or a Wi-Fi QR code)
 //  3. Existing Wi-Fi Connection via iOS Settings
 //
 
@@ -16,11 +16,11 @@ struct DashboardConnectSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var connectionManager: DashboardConnectionManager
 
-    @State private var selectedMethod: Int = 0 // 0: Enter SSID, 1: Scan QR, 2: iOS Settings
+    @State private var selectedMethod: Int = 1 // 0: Enter name, 1: Scan dash, 2: iOS Settings
     @State private var manualSSID: String = ""
     @State private var manualPassword: String = ""
     @State private var requiresPassword: Bool = false
-    @State private var manualQRCodeText: String = ""
+    @State private var scannedName: String?
 
     var body: some View {
         NavigationStack {
@@ -40,8 +40,8 @@ struct DashboardConnectSheet: View {
                                 .tracking(1.2)
 
                             Picker("Method", selection: $selectedMethod) {
-                                Text("Enter SSID").tag(0)
-                                Text("Scan QR").tag(1)
+                                Text("Enter Name").tag(0)
+                                Text("Scan Dash").tag(1)
                                 Text("iOS Settings").tag(2)
                             }
                             .pickerStyle(.segmented)
@@ -54,6 +54,7 @@ struct DashboardConnectSheet: View {
                                 ssid: $manualSSID,
                                 password: $manualPassword,
                                 requiresPassword: $requiresPassword,
+                                scannedName: scannedName,
                                 onConnect: {
                                     connectionManager.connectViaManualSSID(
                                         ssid: manualSSID,
@@ -62,12 +63,23 @@ struct DashboardConnectSheet: View {
                                 }
                             )
                         } else if selectedMethod == 1 {
-                            QRCodeScanPanel(
-                                manualQRText: $manualQRCodeText,
-                                onScanPayload: { payload in
-                                    connectionManager.connectViaQRCode(payload: payload)
+                            DashScanPanel { result in
+                                // Never join straight from the camera: OCR can misread a letter,
+                                // so the name goes into the form for the rider to check first.
+                                switch result {
+                                case .networkName(let name):
+                                    manualSSID = name
+                                    requiresPassword = false
+                                    manualPassword = ""
+                                    scannedName = name
+                                case .wifiQR(let ssid, let password):
+                                    manualSSID = ssid
+                                    requiresPassword = password != nil
+                                    manualPassword = password ?? ""
+                                    scannedName = ssid
                                 }
-                            )
+                                selectedMethod = 0
+                            }
                         } else {
                             ExistingWiFiPanel(
                                 onCheckConnection: {
@@ -300,6 +312,7 @@ struct ManualSSIDPanel: View {
     @Binding var ssid: String
     @Binding var password: String
     @Binding var requiresPassword: Bool
+    var scannedName: String? = nil
     let onConnect: () -> Void
 
     private var isConnectDisabled: Bool {
@@ -308,23 +321,37 @@ struct ManualSSIDPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("MANUAL SSID ENTRY (P0)")
+            Text("MOTORCYCLE NETWORK NAME")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundColor(Theme.textTertiary)
                 .tracking(1.2)
 
-            Text("Enter or paste the exact Wi-Fi SSID broadcast by your Royal Enfield Tripper Dash. No camera permissions required.")
+            Text("On the bike, hold the joystick for 3 seconds until the dash shows its network name (for example RE_MVWW_260317). Type it exactly as shown, or use Scan Dash.")
                 .font(.system(size: 12))
                 .foregroundColor(Theme.textSecondary)
+
+            if let scanned = scannedName, scanned == ssid {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "text.viewfinder")
+                        .foregroundColor(Theme.apexRed)
+                    Text("Read from the camera. Check every letter and number against the dash before connecting.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.surfaceSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
 
             VStack(spacing: 12) {
                 // Exact SSID Text Field
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Motorcycle Wi-Fi SSID (Exact Case)")
+                    Text("Network name (exact capitals and underscores)")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(Theme.textSecondary)
 
-                    TextField("e.g. RE_TRIPPER_450 or RE_GUERRILLA_XXXX", text: $ssid)
+                    TextField("e.g. RE_MVWW_260317", text: $ssid)
                         .autocorrectionDisabled(true)
                         .textInputAutocapitalization(.never)
                         .foregroundColor(Theme.textPrimary)
@@ -340,10 +367,10 @@ struct ManualSSIDPanel: View {
                 // Password toggle (Default: OFF / passwordless)
                 Toggle(isOn: $requiresPassword) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Network Requires Password")
+                        Text("Use a different Wi-Fi password")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(Theme.textPrimary)
-                        Text("Tripper Dash networks default to passwordless open pairing")
+                        Text("ReTripper uses the standard Tripper Dash password automatically. Turn this on only if your dash was set to a custom one.")
                             .font(.system(size: 11))
                             .foregroundColor(Theme.textTertiary)
                     }
@@ -395,65 +422,33 @@ struct ManualSSIDPanel: View {
     }
 }
 
-// MARK: - Method 2: Scan QR Code Panel
-struct QRCodeScanPanel: View {
-    @Binding var manualQRText: String
-    let onScanPayload: (String) -> Void
+// MARK: - Method 2: Scan the dash with the camera
+struct DashScanPanel: View {
+    let onFound: (DashScanResult) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("DASHBOARD QR PAIRING")
+            Text("SCAN THE DASH")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundColor(Theme.textTertiary)
                 .tracking(1.2)
 
-            Text("Scan the QR code displayed on your motorcycle's round TFT Tripper Dash cluster.")
-                .font(.system(size: 12))
-                .foregroundColor(Theme.textSecondary)
-
-            // Live Camera Viewfinder & Direct Payload Fallback
-            VStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Theme.surfaceSecondary)
-                        .frame(height: 240)
-                        .clipped()
-                        .overlay(
-                            QRScannerView(onCodeScanned: onScanPayload)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Theme.borderSubtle, lineWidth: 1)
-                        )
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Or paste raw QR payload string:")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
-
-                    TextField("e.g. WIFI:S:RE_TRIPPER_450;;", text: $manualQRText)
-                        .autocorrectionDisabled(true)
-                        .textInputAutocapitalization(.never)
-                        .foregroundColor(Theme.textPrimary)
-                        .padding(10)
-                        .background(Theme.surfaceSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-
-                Button(action: { onScanPayload(manualQRText) }) {
-                    Text("Apply QR Data & Connect")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(Theme.textPrimary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Theme.apexRed)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.smallCornerRadius, style: .continuous))
-                }
-                .disabled(manualQRText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .opacity(manualQRText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1.0)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("1. Turn the ignition on.")
+                Text("2. Hold the joystick on the right switch for 3 seconds. The dash shows a name like RE_MVWW_260317.")
+                Text("3. Point the camera at the name. You'll check it before connecting.")
             }
+            .font(.system(size: 12))
+            .foregroundColor(Theme.textSecondary)
+
+            DashTextScannerView(onFound: onFound)
+                .frame(height: 260)
+                .background(Theme.surfaceSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Theme.borderSubtle, lineWidth: 1)
+                )
         }
         .darkCard(padding: 16)
     }
