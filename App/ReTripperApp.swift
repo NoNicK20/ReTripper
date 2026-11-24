@@ -9,11 +9,16 @@
 import SwiftUI
 
 @main
+@MainActor
 struct ReTripperApp: App {
+    @StateObject private var dataManager = DataManager.shared
+    @StateObject private var appEnv = AppEnvironment.shared
+
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(AppEnvironment.shared)
+                .environmentObject(dataManager)
+                .environmentObject(appEnv)
         }
     }
 }
@@ -22,7 +27,7 @@ struct ReTripperApp: App {
 class AppEnvironment: ObservableObject {
     static let shared = AppEnvironment()
 
-    @Published var isLaunched = false
+    @Published var isLaunched = true
 
     private init() {}
 }
