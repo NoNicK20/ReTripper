@@ -15,11 +15,20 @@ permissions:
 jobs:
   build:
     runs-on: macos-15-intel
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Select Xcode 26 (required by Google Navigation SDK 11)
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$XCODE" ]; then
+            echo "::error::Xcode 26 is not installed on this runner; the Google Navigation SDK needs it."
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE"
 
       - name: Show build environment
         run: |
@@ -30,7 +39,24 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project (no Google SDK, no credentials)
+      - name: Configure Google Maps API key from repository secret
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          # The key is never printed. GitHub also masks secret values in logs.
+          if [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "::warning::GOOGLE_MAPS_API_KEY secret is not set. The app builds, but shows 'Google Maps is not configured' instead of a map."
+            exit 0
+          fi
+          if ! printf '%s' "$GOOGLE_MAPS_API_KEY" | grep -Eq '^[A-Za-z0-9_-]{20,100}$'; then
+            echo "::error::GOOGLE_MAPS_API_KEY secret has an unexpected format (letters, digits, '-' and '_' only)."
+            exit 1
+          fi
+          umask 077
+          echo "GOOGLE_MAPS_API_KEY = $GOOGLE_MAPS_API_KEY" > Config/Secrets.xcconfig
+          echo "Google Maps API key configured from repository secret."
+
+      - name: Generate Xcode project (Google Maps + Navigation + Places SDKs)
         run: xcodegen generate --spec project.yml
 
       - name: Confirm project and scheme
@@ -64,12 +90,17 @@ jobs:
             exit 1
           fi
 
-          # The CI build must not contain a Google Maps key.
+          # Report (without printing it) whether a Google Maps key is embedded.
           GMS_KEY=$(/usr/libexec/PlistBuddy -c 'Print :GMSApiKey' "$APP_PATH/Info.plist" 2>/dev/null || true)
           if [ -n "$GMS_KEY" ]; then
-            echo "A Google Maps API key was embedded in the CI build. Refusing to publish."
-            exit 1
+            echo "Google Maps API key: embedded (from repository secret)"
+          else
+            echo "::warning::Google Maps API key: NOT embedded. The app will show 'Google Maps is not configured'."
           fi
+          unset GMS_KEY
+
+          # Confirm the Google SDK frameworks/resources were bundled.
+          ls "$APP_PATH" | grep -i -E 'google' || echo "::warning::No Google resource bundles found in the app."
 
           mkdir -p Payload
           ditto "$APP_PATH" "Payload/ReTripper.app"
@@ -111,6 +142,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             test | tee "$RUNNER_TEMP/ReTripper-test.log"
 
+      - name: Remove generated secrets file
+        if: always()
+        run: rm -f Config/Secrets.xcconfig
+
       - name: Report compiler and test errors as annotations
         if: failure()
         run: |
@@ -132,54 +167,3 @@ jobs:
             ${{ runner.temp }}/ReTripper-test.log
           if-no-files-found: ignore
           retention-days: 7
-
-  # Compiles the optional Google Navigation SDK integration. It never uses a key
-  # and does not block the main build while the integration is being verified.
-  google-navigation-sdk:
-    runs-on: macos-15-intel
-    timeout-minutes: 45
-    continue-on-error: true
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Select Xcode 26 (required by Navigation SDK 11)
-        run: |
-          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
-          if [ -z "$XCODE" ]; then
-            echo "::warning::Xcode 26 is not installed on this runner; skipping Google SDK build."
-            echo "SKIP_GOOGLE=1" >> "$GITHUB_ENV"
-          else
-            sudo xcode-select -s "$XCODE"
-            xcodebuild -version
-          fi
-
-      - name: Install XcodeGen
-        if: env.SKIP_GOOGLE != '1'
-        run: brew install xcodegen
-
-      - name: Generate project with Google Navigation SDK
-        if: env.SKIP_GOOGLE != '1'
-        run: xcodegen generate --spec project.google.yml
-
-      - name: Build with Google Navigation SDK (no API key)
-        if: env.SKIP_GOOGLE != '1'
-        run: |
-          set -o pipefail
-          xcodebuild \
-            -project ReTripper.xcodeproj \
-            -scheme ReTripper \
-            -configuration Debug \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$RUNNER_TEMP/GoogleDerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            build | tee "$RUNNER_TEMP/ReTripper-google.log"
-
-      - name: Report Google build errors as annotations
-        if: failure()
-        run: |
-          [ -f "$RUNNER_TEMP/ReTripper-google.log" ] || exit 0
-          grep -E ': error: ' "$RUNNER_TEMP/ReTripper-google.log" \
-            | sed "s|$GITHUB_WORKSPACE/||g" | sort -u | head -10 \
-            | while IFS= read -r line; do echo "::error::$line"; done

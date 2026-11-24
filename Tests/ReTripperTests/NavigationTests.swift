@@ -2,56 +2,13 @@
 //  NavigationTests.swift
 //  ReTripperTests
 //
-//  Route progress, deviation/rerouting, maneuver parsing, shared links
+//  Google-driven navigation state, rerouting, maneuver parsing, shared links
 //  and voice-guidance announcement planning.
 //
 
 import XCTest
 import CoreLocation
 @testable import ReTripper
-
-/// Straight north-bound test route: two steps of ~555 m each.
-private func makeRoute(stops: [Destination]? = nil) -> NavRoute {
-    let a = (0...5).map { CLLocationCoordinate2D(latitude: 12.0 + Double($0) * 0.001, longitude: 77.0) }
-    let b = (5...10).map { CLLocationCoordinate2D(latitude: 12.0 + Double($0) * 0.001, longitude: 77.0) }
-    let dest = Destination(name: "Fort", latitude: 12.010, longitude: 77.0)
-    return NavRoute(name: "Test", distanceMeters: 1106, expectedTravelSeconds: 110,
-                    steps: [NavStep(instruction: "Head north", maneuver: .depart, roadName: nil, distanceMeters: 553, coordinates: a),
-                            NavStep(instruction: "Turn right onto MG Road", maneuver: .right, roadName: "MG Road", distanceMeters: 553, coordinates: b)],
-                    stops: stops ?? [dest], sourceLabel: "Test")
-}
-
-final class RouteProgressTrackerTests: XCTestCase {
-    func testProgressAlongRoute() {
-        var tracker = RouteProgressTracker(route: makeRoute())
-        guard case .onRoute(let p) = tracker.update(with: CLLocationCoordinate2D(latitude: 12.002, longitude: 77.0)) else {
-            return XCTFail("Expected on-route")
-        }
-        XCTAssertEqual(p.stepIndex, 0)
-        XCTAssertEqual(p.nextManeuver, .right)
-        XCTAssertEqual(p.nextRoadName, "MG Road")
-        XCTAssertEqual(p.distanceToNextManeuverMeters, 332, accuracy: 10)
-        XCTAssertEqual(p.remainingDistanceMeters, 885, accuracy: 15)
-        XCTAssertEqual(p.fractionComplete, 0.2, accuracy: 0.02)
-    }
-
-    func testOffRouteRequiresConsecutiveSamples() {
-        var tracker = RouteProgressTracker(route: makeRoute())
-        let far = CLLocationCoordinate2D(latitude: 12.003, longitude: 77.003) // ~325 m east
-        if case .offRoute = tracker.update(with: far) { XCTFail("Too early") }
-        if case .offRoute = tracker.update(with: far) { XCTFail("Too early") }
-        guard case .offRoute(let d) = tracker.update(with: far) else { return XCTFail("Expected off-route") }
-        XCTAssertGreaterThan(d, 250)
-        // A good sample resets the counter.
-        _ = tracker.update(with: CLLocationCoordinate2D(latitude: 12.004, longitude: 77.0))
-        XCTAssertEqual(tracker.offRouteCount, 0)
-    }
-
-    func testArrival() {
-        var tracker = RouteProgressTracker(route: makeRoute())
-        XCTAssertEqual(tracker.update(with: CLLocationCoordinate2D(latitude: 12.00999, longitude: 77.0)), .arrived)
-    }
-}
 
 final class ParsingTests: XCTestCase {
     func testManeuverParsing() {
@@ -91,7 +48,7 @@ final class GuidancePlannerTests: XCTestCase {
     private func progress(_ distance: Double, maneuver: Maneuver = .right, step: Int = 0) -> RouteProgress {
         RouteProgress(stepIndex: step, nextManeuver: maneuver, nextInstruction: "Turn right onto MG Road",
                       nextRoadName: "MG Road", distanceToNextManeuverMeters: distance, remainingDistanceMeters: 2000,
-                      remainingSeconds: 200, fractionComplete: 0.1, distanceFromRouteMeters: 3)
+                      remainingSeconds: 200, fractionComplete: 0.1)
     }
 
     func testPrepareAndImminentAnnouncedOnceEach() {
@@ -122,76 +79,140 @@ final class GuidancePlannerTests: XCTestCase {
     }
 }
 
-/// Fake provider so navigation state can be tested without network access.
-final class FakeRouteProvider: NavigationRouteProvider {
-    let engine: NavigationEngine = .appleMapKit
-    var routeCalls = 0
-    var routesToReturn: [NavRoute] = [makeRoute(), makeRoute()]
+/// Fake engine standing in for the Google Navigation SDK map.
+@MainActor
+final class FakeNavigationEngine: NavigationEngineControl {
+    var isReady = true
+    var notReadyReason = "Google Maps is not configured"
+    var onUpdate: ((GoogleNavigationUpdate) -> Void)?
+    var previewed: [[Destination]] = []
+    var guidanceStarted = 0
+    var guidanceStopped = 0
 
-    func searchDestinations(query: String, near: CLLocationCoordinate2D?) async throws -> [Destination] {
-        [Destination(name: query, latitude: 12, longitude: 77)]
-    }
+    func previewRoute(stops: [Destination]) { previewed.append(stops) }
+    func startGuidance() { guidanceStarted += 1 }
+    func stopGuidance() { guidanceStopped += 1 }
 
-    func calculateRoutes(from origin: CLLocationCoordinate2D, stops: [Destination]) async throws -> [NavRoute] {
-        routeCalls += 1
-        return routesToReturn
+    func send(_ instruction: String?, step: Double = 300, remaining: Double = 2000, seconds: TimeInterval = 240,
+              rerouting: Bool = false, arrived: Bool = false) {
+        onUpdate?(GoogleNavigationUpdate(instruction: instruction, roadName: "MG Road", distanceToStepMeters: step,
+                                         remainingMeters: remaining, remainingSeconds: seconds,
+                                         isRerouting: rerouting, arrived: arrived, routeFailed: nil))
     }
 }
 
 @MainActor
-final class NavigationManagerTests: XCTestCase {
-    private func loc(_ lat: Double, _ lon: Double = 77.0) -> CLLocation {
-        CLLocation(coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon), altitude: 0,
-                   horizontalAccuracy: 5, verticalAccuracy: -1, timestamp: Date())
+final class FakePlaceSearch: PlaceSearchProvider {
+    var finished = 0
+    func suggestions(for query: String, near: CLLocationCoordinate2D?) async throws -> [Destination] {
+        [Destination(name: query, subtitle: "Bengaluru", latitude: 0, longitude: 0, placeID: "place-" + query)]
     }
+    func finishSession() { finished += 1 }
+}
 
-    func testRoutePreviewAlternativesAndGuidanceStates() async {
-        let provider = FakeRouteProvider()
-        let nav = NavigationManager(provider: provider)
+@MainActor
+func makeNavigationManager(engine: FakeNavigationEngine = FakeNavigationEngine(),
+                           search: FakePlaceSearch = FakePlaceSearch()) -> NavigationManager {
+    let defaults = UserDefaults(suiteName: "nav-tests-" + UUID().uuidString)!
+    return NavigationManager(engine: engine, search: search, store: DestinationStore(defaults: defaults))
+}
+
+@MainActor
+final class NavigationManagerTests: XCTestCase {
+    private let fort = Destination(name: "Fort", latitude: 0, longitude: 0, placeID: "fort")
+
+    func testPreviewThenGuidanceStateMachine() {
+        let engine = FakeNavigationEngine()
+        let nav = makeNavigationManager(engine: engine)
         XCTAssertEqual(nav.status, .idle)
-        nav.stops = [Destination(name: "Fort", latitude: 12.01, longitude: 77)]
-        await nav.calculateRoutes(from: CLLocationCoordinate2D(latitude: 12, longitude: 77))
+        nav.setDestination(fort)
+        nav.previewRoute()
+        XCTAssertEqual(nav.status, .calculating)
+        XCTAssertEqual(engine.previewed.first?.first?.placeID, "fort")
+        engine.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false, routeFailed: nil, routeReady: true))
         XCTAssertEqual(nav.status, .preview)
-        XCTAssertEqual(nav.candidateRoutes.count, 2)
-        nav.selectedRouteIndex = 1
+
         nav.startGuidance()
         XCTAssertEqual(nav.status, .navigating)
-        XCTAssertEqual(nav.activeRoute, nav.candidateRoutes[1])
-
-        nav.update(location: loc(12.002))
+        XCTAssertEqual(engine.guidanceStarted, 1)
+        engine.send("Turn right onto MG Road", step: 320, remaining: 2000)
         XCTAssertEqual(nav.progress?.nextManeuver, .right)
+        XCTAssertEqual(nav.progress?.distanceToNextManeuverMeters, 320)
+        engine.send("Turn right onto MG Road", step: 120, remaining: 1800)
+        XCTAssertEqual(nav.progress?.fractionComplete ?? 0, 0.1, accuracy: 0.001)
+        XCTAssertEqual(nav.progress?.stepIndex, 0)
+        engine.send("Turn left", step: 500, remaining: 1700)
+        XCTAssertEqual(nav.progress?.stepIndex, 1)
 
         nav.stopNavigation()
         XCTAssertEqual(nav.status, .idle)
+        XCTAssertEqual(engine.guidanceStopped, 1)
         XCTAssertNil(nav.progress)
     }
 
-    func testDeviationTriggersReroute() async throws {
-        let provider = FakeRouteProvider()
-        let nav = NavigationManager(provider: provider)
-        nav.stops = [Destination(name: "Fort", latitude: 12.01, longitude: 77)]
-        await nav.calculateRoutes(from: CLLocationCoordinate2D(latitude: 12, longitude: 77))
+    func testReroutingAndArrivalEvents() {
+        let engine = FakeNavigationEngine()
+        let nav = makeNavigationManager(engine: engine)
+        var events: [NavigationEvent] = []
+        let sub = nav.events.sink { events.append($0) }
+        nav.setDestination(fort)
         nav.startGuidance()
-        XCTAssertEqual(provider.routeCalls, 1)
-        for _ in 0..<3 { nav.update(location: loc(12.003, 77.003)) }
+        engine.send("Turn left")
+        engine.send(nil, rerouting: true)
         XCTAssertEqual(nav.status, .rerouting)
-        try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertEqual(provider.routeCalls, 2)
+        engine.send("Turn right")
         XCTAssertEqual(nav.status, .navigating)
-    }
-
-    func testArrivalEndsGuidance() async {
-        let nav = NavigationManager(provider: FakeRouteProvider())
-        nav.stops = [Destination(name: "Fort", latitude: 12.01, longitude: 77)]
-        await nav.calculateRoutes(from: CLLocationCoordinate2D(latitude: 12, longitude: 77))
-        nav.startGuidance()
-        nav.update(location: loc(12.00999))
+        engine.send(nil, arrived: true)
         XCTAssertEqual(nav.status, .arrived)
+        XCTAssertTrue(events.contains(.offRoute))
+        XCTAssertTrue(events.contains(.rerouted))
+        XCTAssertTrue(events.contains(.arrived("Fort")))
+        sub.cancel()
     }
 
-    func testSearchRecognisesSharedLinks() async {
-        let nav = NavigationManager(provider: FakeRouteProvider())
-        let results = await nav.search("geo:12.5,77.5", near: nil)
-        XCTAssertEqual(results.first?.latitude ?? 0, 12.5, accuracy: 0.0001)
+    func testNotConfiguredShowsMessageInsteadOfAnotherMap() {
+        let engine = FakeNavigationEngine()
+        engine.isReady = false
+        let nav = makeNavigationManager(engine: engine)
+        nav.setDestination(fort)
+        nav.startGuidance()
+        XCTAssertEqual(nav.status, .failed("Google Maps is not configured"))
+        XCTAssertEqual(engine.guidanceStarted, 0)
+    }
+
+    func testRouteFailureReported() {
+        let engine = FakeNavigationEngine()
+        let nav = makeNavigationManager(engine: engine)
+        nav.setDestination(fort)
+        nav.previewRoute()
+        engine.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false, routeFailed: "No route"))
+        XCTAssertEqual(nav.status, .failed("No route"))
+    }
+
+    func testWaypointsInsertedBeforeDestinationAndSessionsFinished() {
+        let search = FakePlaceSearch()
+        let nav = makeNavigationManager(search: search)
+        nav.setDestination(fort)
+        nav.addWaypoint(Destination(name: "Fuel", latitude: 1, longitude: 1))
+        XCTAssertEqual(nav.stops.map { $0.name }, ["Fuel", "Fort"])
+        XCTAssertEqual(search.finished, 2)
+        nav.removeStop(at: 0)
+        XCTAssertEqual(nav.stops.map { $0.name }, ["Fort"])
+    }
+
+    func testSearchUsesPlacesAndRecognisesSharedLinks() async {
+        let nav = makeNavigationManager()
+        let places = await nav.search("Cubbon Park", near: nil)
+        XCTAssertEqual(places.first?.placeID, "place-Cubbon Park")
+        let link = await nav.search("geo:12.5,77.5", near: nil)
+        XCTAssertEqual(link.first?.latitude ?? 0, 12.5, accuracy: 0.0001)
+    }
+
+    func testPlaceIDIdentity() {
+        let a = Destination(name: "A", latitude: 0, longitude: 0, placeID: "x")
+        let b = Destination(name: "B", latitude: 0, longitude: 0, placeID: "x")
+        let c = Destination(name: "C", latitude: 0, longitude: 0, placeID: "y")
+        XCTAssertTrue(a.isSamePlace(as: b))
+        XCTAssertFalse(a.isSamePlace(as: c))
     }
 }

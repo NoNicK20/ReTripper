@@ -1,7 +1,8 @@
 // App.xcconfig — shared build settings (committed).
-// Credentials are NEVER stored here. Put them in Config/Secrets.xcconfig,
-// which is git-ignored. Copy Config/Secrets.example.xcconfig to start.
-// With no secrets file the app builds and falls back to Apple Maps (MapKit).
+// Credentials are NEVER stored here. The Google Maps API key comes from:
+//   - Config/Secrets.xcconfig on your own Mac (git-ignored; copy Secrets.example.xcconfig), or
+//   - the GOOGLE_MAPS_API_KEY secret in GitHub Actions, which writes Secrets.xcconfig at build time.
+// Without a key the app builds, but shows "Google Maps is not configured" instead of a map.
 
 GOOGLE_MAPS_API_KEY =
 SPOTIFY_CLIENT_ID =

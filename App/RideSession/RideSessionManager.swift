@@ -67,13 +67,23 @@ final class RideSessionManager: ObservableObject {
                                     sessionEstablished: dashboard.state.isSessionActive)
     }
 
-    var usesGoogleNavigation: Bool { google.status == .ready }
+    /// Navigation events in a dashboard-neutral form, for a future verified Tripper Dash interface.
+    private(set) lazy var dashboardFeed = DashboardNavigationFeed(registry: { [weak self] in
+        self?.dashboardCapabilities ?? DashboardCapabilityRegistry(protocolSupport: .notVerified, sessionEstablished: false)
+    })
 
     // MARK: Wiring
 
     private func wire() {
         location.locationUpdates
             .sink { [weak self] loc in self?.handle(location: loc) }
+            .store(in: &cancellables)
+
+        audio.$mode
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.syncGoogleVoice() }
+            }
             .store(in: &cancellables)
 
         location.$latestHeading
@@ -158,7 +168,7 @@ final class RideSessionManager: ObservableObject {
     @discardableResult
     func endRide(dataManager: DataManager) -> RideLog? {
         guard rideState != .idle else { return nil }
-        let rideTitle = navigation.activeRoute?.stops.last?.name ?? navigation.stops.last?.name ?? "Recorded ride"
+        let rideTitle = navigation.stops.last?.name ?? "Recorded ride"
         let result = tripMeter.finishRide()
         let metrics = result.metrics
         rideState = .idle
@@ -231,14 +241,18 @@ final class RideSessionManager: ObservableObject {
 
     // MARK: Navigation
 
+    /// Sends the chosen stops to Google and shows the route options on the map.
+    func previewRoute() {
+        navigation.previewRoute()
+        location.startLocation(for: .navigation)
+    }
+
     func startNavigation() {
-        if usesGoogleNavigation {
-            navigation.startGoogleGuidance()
-            audio.externalEngineSpeaks = true
-        } else {
-            navigation.startGuidance()
-            audio.externalEngineSpeaks = false
-        }
+        // Google's Navigation SDK speaks its own directions; ReTripper's voice stays
+        // silent during guidance so instructions are never announced twice.
+        audio.externalEngineSpeaks = true
+        syncGoogleVoice()
+        navigation.startGuidance()
         location.startLocation(for: .navigation)
         startTicker()
         updateIdleTimer()
@@ -253,46 +267,48 @@ final class RideSessionManager: ObservableObject {
         updateIdleTimer()
     }
 
+    /// Repeats the current direction with ReTripper's voice (on explicit rider request).
+    func repeatInstruction() {
+        if let text = navigation.progress?.nextInstruction {
+            audio.speakOnRequest("\(RideFormat.distanceSpoken(navigation.progress?.distanceToNextManeuverMeters ?? 0)), \(text)")
+        } else {
+            audio.repeatLastInstruction()
+        }
+    }
+
+    /// Applies the rider's guidance mode (full / important only / muted) to Google's voice.
+    func syncGoogleVoice() {
+        google.setVoice(audio.mode, callActive: calls.isCallInProgress)
+    }
+
     // MARK: Event handling
 
     private func handle(location loc: CLLocation) {
         tripMeter.process(loc)
         compass.update(location: loc)
-        navigation.update(location: loc)
         if rideState == .recording || navigation.status.isActive {
             alerts.evaluateGPS(horizontalAccuracy: loc.horizontalAccuracy)
-        }
-        if let progress = navigation.progress, navigation.status.isActive, navigation.engine == .appleMapKit {
-            audio.handle(progress: progress, speedMps: max(0, loc.speed))
         }
     }
 
     private func handle(navigationEvent event: NavigationEvent) {
         switch event {
         case .started:
-            audio.routeChanged()
             alerts.post(.navigationInterruption, key: "nav-started", priority: .info, title: "Navigation started",
-                        message: navigation.engine.rawValue, symbol: "location.north.line", autoDismiss: 4)
+                        message: navigation.engineName, symbol: "location.north.line", autoDismiss: 4)
         case .stepAdvanced(let p):
-            if p.nextManeuver != .straight {
-                alerts.post(.maneuver, priority: .info, title: p.nextInstruction,
-                            message: RideFormat.distance(p.distanceToNextManeuverMeters),
-                            symbol: p.nextManeuver.symbolName, autoDismiss: 5)
-            }
+            dashboardFeed.publish(progress: p)
         case .offRoute:
             alerts.post(.routeDeviation, priority: .warning, title: "Off route",
-                        message: "Recalculating…", symbol: "arrow.triangle.branch", autoDismiss: 6)
-            audio.announceEvent("Recalculating route")
+                        message: "Google is recalculating the route…", symbol: "arrow.triangle.branch", autoDismiss: 6)
         case .rerouted:
-            audio.routeChanged()
             alerts.dismiss(key: AlertCategory.routeDeviation.rawValue)
-        case .rerouteFailed(let message):
-            alerts.post(.navigationInterruption, priority: .warning, title: "Reroute failed",
-                        message: message, symbol: "exclamationmark.triangle", autoDismiss: 8)
+        case .failed(let message):
+            alerts.post(.navigationInterruption, priority: .warning, title: "Navigation problem",
+                        message: message, symbol: "exclamationmark.triangle", autoDismiss: 10)
         case .arrived(let name):
             alerts.post(.maneuver, key: "arrived", priority: .advisory, title: "Arrived",
                         message: name, symbol: "flag.checkered", autoDismiss: 8)
-            audio.announceEvent("You have arrived at \(name)")
             location.stopLocation(for: .navigation)
         case .stopped:
             break
@@ -301,6 +317,7 @@ final class RideSessionManager: ObservableObject {
 
     private func handle(callPhase phase: CallPhase) {
         audio.setCallActive(calls.isCallInProgress)
+        syncGoogleVoice()
         switch phase {
         case .incoming:
             alerts.post(.call, key: "call", priority: .critical, title: "Incoming call",
@@ -367,6 +384,10 @@ enum RideLogBuilder {
 }
 
 enum RideFormat {
+    static func distanceSpoken(_ meters: Double) -> String {
+        "In " + GuidanceAnnouncementPlanner.spokenDistance(meters)
+    }
+
     static func distance(_ meters: Double) -> String {
         if meters >= 1000 { return String(format: "%.1f km", meters / 1000) }
         return "\(max(0, Int((meters / 10).rounded()) * 10)) m"

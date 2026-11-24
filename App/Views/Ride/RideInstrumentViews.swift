@@ -357,6 +357,8 @@ struct AudioRoutePicker: UIViewRepresentable {
 struct AudioGuidanceSheet: View {
     @ObservedObject var audio: NavigationAudioManager
     @ObservedObject var music: MusicManager
+    @ObservedObject var google: GoogleNavigationController
+    let onRepeat: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -371,14 +373,9 @@ struct AudioGuidanceSheet: View {
                                 ForEach(GuidanceMode.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .pickerStyle(.segmented)
-                            if audio.externalEngineSpeaks {
-                                Text("Google Navigation SDK is speaking directions; ReTripper's own voice stays silent to avoid duplicates.")
-                                    .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
-                            }
-                            BigRideButton(title: "Repeat instruction", symbol: "arrow.counterclockwise") {
-                                audio.repeatLastInstruction()
-                            }
-                            .disabled(audio.lastInstruction == nil)
+                            Text("Directions are spoken by Google Navigation. Full = all prompts, Important only = alerts only, Muted = silent. Voice pauses during phone calls.")
+                                .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
+                            BigRideButton(title: "Repeat instruction", symbol: "arrow.counterclockwise", action: onRepeat)
                         }
                         .darkCard(padding: 14)
 

@@ -130,6 +130,11 @@ final class NavigationAudioManager: NSObject, ObservableObject {
         speak(text)
     }
 
+    /// Speaks text the rider explicitly asked for (e.g. "repeat"), even while Google speaks guidance.
+    func speakOnRequest(_ text: String) {
+        speak(text, force: true)
+    }
+
     func repeatLastInstruction() {
         guard let text = lastInstruction else { return }
         speak(text, force: true)

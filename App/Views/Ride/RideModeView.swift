@@ -2,9 +2,11 @@
 //  RideModeView.swift
 //  ReTripper
 //
-//  Dedicated riding interface: full map / turn-by-turn / trip / compass panels,
-//  compact music controls, call and contextual alert overlay, audio controls,
-//  dashboard status and ride lifecycle controls.
+//  Dedicated riding interface. In Map mode the real Google Maps view fills the
+//  whole display (edge to edge) and ReTripper's overlays sit inside the safe
+//  area, clear of the Dynamic Island, status bar and home indicator. The map's
+//  padding is measured from those overlays so Google's logo, compass and
+//  re-centre controls always stay visible.
 //
 
 import SwiftUI
@@ -17,15 +19,19 @@ enum RidePanel: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private struct TopOverlayHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct BottomOverlayHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct RideModeView: View {
     @EnvironmentObject private var session: RideSessionManager
     @EnvironmentObject private var dataManager: DataManager
-
-    @State private var panel: RidePanel = .map
-    @State private var showingSearch = false
-    @State private var showingAudio = false
-    @State private var showingDashboard = false
-    @State private var confirmEnd = false
 
     var body: some View {
         RideModeContent(session: session,
@@ -35,11 +41,6 @@ struct RideModeView: View {
                         google: session.google,
                         dashboard: session.dashboard,
                         audio: session.audio,
-                        panel: $panel,
-                        showingSearch: $showingSearch,
-                        showingAudio: $showingAudio,
-                        showingDashboard: $showingDashboard,
-                        confirmEnd: $confirmEnd,
                         unit: dataManager.distanceUnit,
                         onEnd: { _ = session.endRide(dataManager: dataManager) })
             .onAppear { session.rideScreenAppeared() }
@@ -56,59 +57,88 @@ private struct RideModeContent: View {
     @ObservedObject var google: GoogleNavigationController
     @ObservedObject var dashboard: DashboardConnectionManager
     @ObservedObject var audio: NavigationAudioManager
-    @Binding var panel: RidePanel
-    @Binding var showingSearch: Bool
-    @Binding var showingAudio: Bool
-    @Binding var showingDashboard: Bool
-    @Binding var confirmEnd: Bool
     let unit: DistanceUnit
     let onEnd: () -> Void
 
+    @State private var panel: RidePanel = .map
+    @State private var showingSearch = false
+    @State private var showingAudio = false
+    @State private var showingDashboard = false
+    @State private var confirmEnd = false
+    @State private var topHeight: CGFloat = 0
+    @State private var bottomHeight: CGFloat = 0
+
     var body: some View {
-        ZStack(alignment: .top) {
-            Theme.background.ignoresSafeArea()
-
-            VStack(spacing: 10) {
-                topBar
-                Picker("Panel", selection: $panel) {
-                    ForEach(RidePanel.allCases) { Text($0.rawValue).tag($0) }
+        GeometryReader { geo in
+            ZStack {
+                // Layer 1: full-bleed map or black background.
+                if panel == .map {
+                    GoogleMapSurface(google: google, padding: mapPadding(safe: geo.safeAreaInsets))
+                        .ignoresSafeArea()
+                } else {
+                    Theme.background.ignoresSafeArea()
                 }
-                .pickerStyle(.segmented)
+
+                // Layer 2: overlays inside the safe area.
+                VStack(spacing: 8) {
+                    VStack(spacing: 8) {
+                        topBar
+                        Picker("Panel", selection: $panel) {
+                            ForEach(RidePanel.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .background(Color.black.opacity(0.85).clipShape(RoundedRectangle(cornerRadius: 8)))
+                        if panel == .map {
+                            DirectionCard(navigation: navigation)
+                            RideAlertOverlay(alerts: session.alerts)
+                        }
+                    }
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: TopOverlayHeightKey.self, value: g.size.height)
+                    })
+
+                    if panel == .map {
+                        Spacer(minLength: 0)
+                    } else {
+                        RideAlertOverlay(alerts: session.alerts)
+                        panelContent
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+
+                    VStack(spacing: 8) {
+                        if panel == .map {
+                            HStack(alignment: .bottom) {
+                                RouteSummaryStrip(navigation: navigation, tripMeter: tripMeter, unit: unit)
+                                mapButtons
+                            }
+                        }
+                        NowPlayingCard(music: session.music)
+                        controls
+                    }
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: BottomOverlayHeightKey.self, value: g.size.height)
+                    })
+                }
                 .padding(.horizontal, 12)
-
-                mainPanel
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-                    .padding(.horizontal, 12)
-
-                if panel == .map, let p = navigation.progress, navigation.status.isActive {
-                    compactManeuver(p)
-                }
-
-                NowPlayingCard(music: session.music)
-                    .padding(.horizontal, 12)
-
-                controls
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
+                .padding(.vertical, 4)
             }
-
-            RideAlertOverlay(alerts: session.alerts)
-                .padding(.top, 56)
+            .onPreferenceChange(TopOverlayHeightKey.self) { topHeight = $0 }
+            .onPreferenceChange(BottomOverlayHeightKey.self) { bottomHeight = $0 }
         }
         .sheet(isPresented: $showingSearch) {
             DestinationSearchSheet(navigation: navigation,
                                    store: DestinationStore.shared,
+                                   google: google,
                                    origin: location.latestLocation?.coordinate,
-                                   googleStatus: google.status,
-                                   onStart: { session.startNavigation(); panel = .turnByTurn },
-                                   onRequestGoogleTerms: { google.requestTermsAcceptance { _ in } })
+                                   onPreview: { session.previewRoute(); panel = .map },
+                                   onStart: { session.startNavigation(); panel = .map })
         }
         .sheet(isPresented: $showingAudio) {
-            AudioGuidanceSheet(audio: session.audio, music: session.music)
+            AudioGuidanceSheet(audio: audio, music: session.music, google: google,
+                               onRepeat: { session.repeatInstruction() })
         }
         .sheet(isPresented: $showingDashboard) {
-            DashboardRideSheet(connection: session.dashboard, navigation: navigation)
+            DashboardRideSheet(connection: dashboard, navigation: navigation)
         }
         .confirmationDialog("End ride?", isPresented: $confirmEnd, titleVisibility: .visible) {
             Button("End and save ride", role: .destructive, action: onEnd)
@@ -120,6 +150,12 @@ private struct RideModeContent: View {
         }
     }
 
+    /// Map padding = safe area + overlay heights, so Google's attribution and controls stay visible.
+    private func mapPadding(safe: EdgeInsets) -> UIEdgeInsets {
+        UIEdgeInsets(top: safe.top + topHeight + 8, left: safe.leading + 4,
+                     bottom: safe.bottom + bottomHeight + 8, right: safe.trailing + 4)
+    }
+
     // MARK: Top bar
 
     private var topBar: some View {
@@ -128,36 +164,40 @@ private struct RideModeContent: View {
                 HStack(spacing: 5) {
                     Image(systemName: dashboard.state.isAssociated ? "wifi" : "wifi.slash")
                     Text(dashboard.state.isAssociated ? "TRIPPER WI-FI" : "NO DASH")
+                        .lineLimit(1)
                 }
                 .font(.system(size: 11, weight: .heavy, design: .monospaced))
                 .foregroundColor(dashboard.state.isAssociated ? Theme.textPrimary : Theme.textTertiary)
-                .padding(.horizontal, 10).frame(minHeight: 36)
-                .background(Theme.surfaceSecondary).clipShape(Capsule())
+                .padding(.horizontal, 10).frame(minHeight: 40)
+                .background(Color.black.opacity(0.85)).clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Tripper Dash status")
 
             gpsBadge
 
-            Spacer()
+            Spacer(minLength: 4)
 
-            Text(RideFormat.speedKmh(tripMeter.currentSpeedMps))
-                .font(.system(size: 30, weight: .heavy, design: .rounded))
-                .foregroundColor(Theme.textPrimary)
-                .monospacedDigit()
-            Text("km/h").font(.system(size: 11, weight: .bold)).foregroundColor(Theme.textSecondary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(RideFormat.speedKmh(tripMeter.currentSpeedMps))
+                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+                    .foregroundColor(Theme.textPrimary)
+                    .monospacedDigit()
+                Text("km/h").font(.system(size: 11, weight: .bold)).foregroundColor(Theme.textSecondary)
+            }
+            .padding(.horizontal, 10).frame(minHeight: 40)
+            .background(Color.black.opacity(0.85)).clipShape(Capsule())
 
             Button { showingAudio = true } label: {
                 Image(systemName: audio.mode == .muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
                     .frame(width: 44, height: 44)
-                    .background(Theme.surfaceSecondary).clipShape(Circle())
+                    .background(Color.black.opacity(0.85)).clipShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Audio guidance settings")
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
     }
 
     private var gpsBadge: some View {
@@ -174,14 +214,47 @@ private struct RideModeContent: View {
         return Text(text)
             .font(.system(size: 11, weight: .heavy, design: .monospaced))
             .foregroundColor(good ? Theme.textPrimary : Theme.apexRed)
-            .padding(.horizontal, 10).frame(minHeight: 36)
-            .background(Theme.surfaceSecondary).clipShape(Capsule())
+            .lineLimit(1)
+            .padding(.horizontal, 10).frame(minHeight: 40)
+            .background(Color.black.opacity(0.85)).clipShape(Capsule())
+    }
+
+    private var lightingSymbol: String {
+        switch google.lighting {
+        case .auto: return "circle.lefthalf.filled"
+        case .day: return "sun.max.fill"
+        case .night: return "moon.fill"
+        }
+    }
+
+    private var mapButtons: some View {
+        VStack(spacing: 8) {
+            roundButton(lightingSymbol, label: "Map lighting: \(google.lighting.rawValue)") {
+                let all = MapLighting.allCases
+                let index = all.firstIndex(of: google.lighting) ?? 0
+                google.lighting = all[(index + 1) % all.count]
+            }
+            roundButton(google.showsTraffic ? "car.fill" : "car", label: "Traffic") { google.showsTraffic.toggle() }
+        }
+    }
+
+    private func roundButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundColor(Theme.textPrimary)
+                .frame(width: 44, height: 44)
+                .background(Color.black.opacity(0.85))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     // MARK: Panels
 
     @ViewBuilder
-    private var mainPanel: some View {
+    private var panelContent: some View {
         if !location.isAuthorized && location.authorization != .notDetermined {
             VStack(spacing: 12) {
                 Image(systemName: "location.slash").font(.system(size: 44)).foregroundColor(Theme.textTertiary)
@@ -194,70 +267,39 @@ private struct RideModeContent: View {
                 .font(.system(size: 15, weight: .bold)).foregroundColor(Theme.apexRed)
             }
             .padding(20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.surface)
         } else {
             switch panel {
             case .map:
-                RideMapView(navigation: navigation, tripMeter: tripMeter,
-                            useGoogle: session.usesGoogleNavigation,
-                            voiceEnabled: audio.mode != .muted)
+                EmptyView()
             case .turnByTurn:
                 TurnByTurnView(navigation: navigation, onSearch: { showingSearch = true })
             case .trip:
                 ScrollView { TripMeterPanel(tripMeter: tripMeter, unit: unit) }
             case .compass:
-                ScrollView {
-                    DigitalCompassView(compass: session.compass)
-                }
+                ScrollView { DigitalCompassView(compass: session.compass) }
             }
         }
-    }
-
-    private func compactManeuver(_ p: RouteProgress) -> some View {
-        Button { panel = .turnByTurn } label: {
-            HStack(spacing: 12) {
-                Image(systemName: p.nextManeuver.symbolName)
-                    .font(.system(size: 30, weight: .heavy)).foregroundColor(Theme.textPrimary)
-                    .frame(width: 48)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(RideFormat.distance(p.distanceToNextManeuverMeters))
-                        .font(.system(size: 22, weight: .heavy, design: .rounded)).foregroundColor(Theme.apexRed)
-                    Text(p.nextInstruction).font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary).lineLimit(1)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text(RideFormat.distance(p.remainingDistanceMeters))
-                        .font(.system(size: 13, weight: .bold)).foregroundColor(Theme.textPrimary)
-                    if p.remainingSeconds > 0 {
-                        Text("ETA \(RideFormat.clock(p.eta))").font(.system(size: 11)).foregroundColor(Theme.textSecondary)
-                    }
-                }
-            }
-            .darkCard(padding: 10)
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
     }
 
     // MARK: Controls
 
     private var controls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             switch session.rideState {
             case .idle:
-                BigRideButton(title: "Start ride", symbol: "record.circle", filled: true) { session.startRide() }
+                BigRideButton(title: "Start ride", symbol: "record.circle", filled: !navigation.status.isActive) { session.startRide() }
             case .recording:
                 BigRideButton(title: "Pause", symbol: "pause.fill") { session.pauseRide() }
-                BigRideButton(title: "End", symbol: "stop.fill", filled: true) { confirmEnd = true }
+                BigRideButton(title: "End ride", symbol: "stop.fill") { confirmEnd = true }
             case .paused:
                 BigRideButton(title: "Resume", symbol: "play.fill", filled: true) { session.resumeRide() }
-                BigRideButton(title: "End", symbol: "stop.fill") { confirmEnd = true }
+                BigRideButton(title: "End ride", symbol: "stop.fill") { confirmEnd = true }
             }
 
             if navigation.status.isActive || navigation.status == .arrived {
-                BigRideButton(title: "Stop nav", symbol: "xmark") { session.stopNavigation() }
+                BigRideButton(title: "End nav", symbol: "xmark", filled: true) { session.stopNavigation() }
+            } else if navigation.status == .preview {
+                BigRideButton(title: "Start nav", symbol: "location.north.fill", filled: true) { session.startNavigation() }
             } else {
                 BigRideButton(title: "Navigate", symbol: "magnifyingglass") { showingSearch = true }
             }
@@ -309,6 +351,8 @@ struct DashboardRideSheet: View {
                                     }
                                 }
                             }
+                            Text("Google Maps is not projected to the Tripper Dash. That needs a verified dashboard interface and a Google Maps Platform licensing review.")
+                                .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                         }
                         .darkCard(padding: 14)
 
@@ -330,7 +374,7 @@ struct DashboardRideSheet: View {
                                 }
                             }
                             .frame(width: 220, height: 220)
-                            Text("Illustration of the data a round dashboard could show. ReTripper cannot display anything on the real Tripper Dash.")
+                            Text("Illustration of turn data a round dashboard could show. ReTripper cannot display anything on the real Tripper Dash.")
                                 .font(.system(size: 11)).foregroundColor(Theme.textSecondary).multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity)

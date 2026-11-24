@@ -52,6 +52,35 @@ struct UnavailableDashboardOutput: DashboardOutput {
     func send(_ message: DashboardMessage) -> Bool { false }
 }
 
+/// Modular navigation feed for a future, verified dashboard interface.
+/// Converts navigation progress into dashboard messages and sends them only when
+/// the turn-by-turn capability is available. Today nothing is sent.
+/// Note: rendering Google Maps imagery on another display would also need
+/// Google Maps Platform licensing review; only text/maneuver data is modelled here.
+@MainActor
+final class DashboardNavigationFeed {
+    private let registry: () -> DashboardCapabilityRegistry
+    private(set) var lastMessage: DashboardMessage?
+    private(set) var sentCount = 0
+
+    init(registry: @escaping () -> DashboardCapabilityRegistry) {
+        self.registry = registry
+    }
+
+    @discardableResult
+    func publish(progress: RouteProgress) -> Bool {
+        let message = DashboardMessage.maneuver(symbol: progress.nextManeuver.rawValue,
+                                                distanceMeters: progress.distanceToNextManeuverMeters,
+                                                road: progress.nextRoadName)
+        lastMessage = message
+        let current = registry()
+        guard current.availability(of: .turnByTurn).isAvailable else { return false }
+        let sent = current.output.send(message)
+        if sent { sentCount += 1 }
+        return sent
+    }
+}
+
 struct DashboardCapabilityRegistry {
     let protocolSupport: DashboardProtocolSupport
     let sessionEstablished: Bool

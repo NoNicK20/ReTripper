@@ -2,7 +2,7 @@
 //  NavigationModels.swift
 //  ReTripper
 //
-//  Provider-neutral navigation models plus pure route-progress tracking.
+//  Navigation models shared by the Google navigation engine, UI and tests.
 //
 
 import Foundation
@@ -36,7 +36,7 @@ enum Maneuver: String, Codable, Equatable {
         }
     }
 
-    /// Derives a maneuver from provider instruction text (MapKit does not expose a maneuver type).
+    /// Derives a maneuver symbol from navigation instruction text.
     static func parse(instruction: String) -> Maneuver {
         let t = instruction.lowercased()
         if t.contains("arrive") || t.contains("destination") { return .arrive }
@@ -77,46 +77,19 @@ struct Destination: Codable, Equatable, Identifiable, Hashable {
     var subtitle: String = ""
     var latitude: Double
     var longitude: Double
+    /// Google Place ID from Places autocomplete. When present, navigation routes to the place ID.
+    var placeID: String? = nil
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     func isSamePlace(as other: Destination) -> Bool {
-        CLLocation(latitude: latitude, longitude: longitude)
+        if let a = placeID, let b = other.placeID { return a == b }
+        if placeID != nil || other.placeID != nil { return false }
+        return CLLocation(latitude: latitude, longitude: longitude)
             .distance(from: CLLocation(latitude: other.latitude, longitude: other.longitude)) < 30
     }
-}
-
-// MARK: - Route
-
-struct NavStep: Equatable {
-    var instruction: String
-    var maneuver: Maneuver
-    var roadName: String?
-    var distanceMeters: Double
-    var coordinates: [CLLocationCoordinate2D]
-
-    static func == (lhs: NavStep, rhs: NavStep) -> Bool {
-        lhs.instruction == rhs.instruction && lhs.distanceMeters == rhs.distanceMeters
-            && lhs.coordinates.count == rhs.coordinates.count
-    }
-}
-
-struct NavRoute: Identifiable, Equatable {
-    let id = UUID()
-    var name: String
-    var distanceMeters: Double
-    var expectedTravelSeconds: TimeInterval
-    var steps: [NavStep]
-    var advisories: [String] = []
-    var stops: [Destination]
-    /// Provider that produced this route, shown to the rider.
-    var sourceLabel: String
-
-    var coordinates: [CLLocationCoordinate2D] { steps.flatMap { $0.coordinates } }
-
-    static func == (lhs: NavRoute, rhs: NavRoute) -> Bool { lhs.id == rhs.id }
 }
 
 // MARK: - Progress
@@ -130,7 +103,6 @@ struct RouteProgress: Equatable {
     var remainingDistanceMeters: Double
     var remainingSeconds: TimeInterval
     var fractionComplete: Double
-    var distanceFromRouteMeters: Double
 
     var eta: Date { Date().addingTimeInterval(remainingSeconds) }
 }
@@ -145,132 +117,6 @@ enum NavigationStatus: Equatable {
     case failed(String)
 
     var isActive: Bool { self == .navigating || self == .rerouting }
-}
-
-/// Which engine is producing guidance. Shown to the rider so MapKit is never presented as Google.
-enum NavigationEngine: String, Equatable {
-    case appleMapKit = "Apple Maps (MapKit)"
-    case googleNavigationSDK = "Google Maps Navigation SDK"
-}
-
-// MARK: - Pure progress tracker
-
-/// Projects the rider's position onto a route polyline to compute live progress
-/// and detect route deviation. Independent of any map SDK, so it is unit-testable.
-struct RouteProgressTracker {
-    struct Config {
-        var offRouteThresholdMeters: Double = 45
-        var offRouteConsecutiveSamples: Int = 3
-        var arrivalThresholdMeters: Double = 30
-    }
-
-    let route: NavRoute
-    var config = Config()
-
-    private let points: [CLLocationCoordinate2D]
-    private let cumulative: [Double]        // distance along route at each point
-    private let stepEndDistance: [Double]   // distance along route where each step ends
-    private let totalLength: Double
-    private(set) var offRouteCount = 0
-    private(set) var lastAlong: Double = 0
-
-    init(route: NavRoute, config: Config = Config()) {
-        self.route = route
-        self.config = config
-        var pts: [CLLocationCoordinate2D] = []
-        var cum: [Double] = []
-        var ends: [Double] = []
-        var running = 0.0
-        for step in route.steps {
-            for c in step.coordinates {
-                if let last = pts.last {
-                    running += RouteProgressTracker.distance(last, c)
-                }
-                pts.append(c)
-                cum.append(running)
-            }
-            ends.append(running)
-        }
-        points = pts
-        cumulative = cum
-        stepEndDistance = ends
-        totalLength = max(running, 1)
-    }
-
-    enum Outcome: Equatable {
-        case onRoute(RouteProgress)
-        case offRoute(distanceMeters: Double)
-        case arrived
-        case noGeometry
-    }
-
-    mutating func update(with location: CLLocationCoordinate2D, accuracy: Double = 10) -> Outcome {
-        guard points.count >= 2 else { return .noGeometry }
-        var bestDistance = Double.greatestFiniteMagnitude
-        var bestAlong = 0.0
-        for i in 0..<(points.count - 1) {
-            let (d, t) = RouteProgressTracker.project(location, onto: points[i], points[i + 1])
-            if d < bestDistance {
-                bestDistance = d
-                bestAlong = cumulative[i] + t * (cumulative[i + 1] - cumulative[i])
-            }
-        }
-
-        let threshold = config.offRouteThresholdMeters + max(0, min(accuracy, 50))
-        if bestDistance > threshold {
-            offRouteCount += 1
-            if offRouteCount >= config.offRouteConsecutiveSamples {
-                return .offRoute(distanceMeters: bestDistance)
-            }
-        } else {
-            offRouteCount = 0
-        }
-
-        lastAlong = bestAlong
-        let remaining = max(0, totalLength - bestAlong)
-        if remaining <= config.arrivalThresholdMeters { return .arrived }
-
-        let stepIndex = stepEndDistance.firstIndex(where: { bestAlong < $0 }) ?? max(0, route.steps.count - 1)
-        let nextIndex = stepIndex + 1
-        let next = nextIndex < route.steps.count ? route.steps[nextIndex] : nil
-        let toManeuver = max(0, (stepEndDistance[safe: stepIndex] ?? totalLength) - bestAlong)
-        let fraction = min(1, max(0, bestAlong / totalLength))
-
-        return .onRoute(RouteProgress(
-            stepIndex: stepIndex,
-            nextManeuver: next?.maneuver ?? .arrive,
-            nextInstruction: next?.instruction ?? "Arrive at \(route.stops.last?.name ?? "destination")",
-            nextRoadName: next?.roadName,
-            distanceToNextManeuverMeters: toManeuver,
-            remainingDistanceMeters: remaining,
-            remainingSeconds: route.expectedTravelSeconds * (remaining / totalLength),
-            fractionComplete: fraction,
-            distanceFromRouteMeters: bestDistance
-        ))
-    }
-
-    // MARK: Geometry helpers (local equirectangular approximation, accurate at route scale)
-
-    static func distance(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> Double {
-        CLLocation(latitude: a.latitude, longitude: a.longitude)
-            .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
-    }
-
-    /// Returns (distance in meters from p to segment ab, fraction t along the segment).
-    static func project(_ p: CLLocationCoordinate2D, onto a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> (Double, Double) {
-        let metersPerDegLat = 111_320.0
-        let metersPerDegLon = 111_320.0 * cos(p.latitude * .pi / 180)
-        let ax = (a.longitude - p.longitude) * metersPerDegLon, ay = (a.latitude - p.latitude) * metersPerDegLat
-        let bx = (b.longitude - p.longitude) * metersPerDegLon, by = (b.latitude - p.latitude) * metersPerDegLat
-        let dx = bx - ax, dy = by - ay
-        let lengthSquared = dx * dx + dy * dy
-        var t = 0.0
-        if lengthSquared > 0 {
-            t = max(0, min(1, -(ax * dx + ay * dy) / lengthSquared))
-        }
-        let cx = ax + t * dx, cy = ay + t * dy
-        return ((cx * cx + cy * cy).squareRoot(), t)
-    }
 }
 
 extension Array {

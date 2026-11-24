@@ -2,8 +2,11 @@
 //  NavigationManager.swift
 //  ReTripper
 //
-//  Coordinates destination search, route calculation, route alternatives,
-//  waypoints, live progress, deviation detection and automatic rerouting.
+//  Navigation state for the ride session. Routing, rerouting, traffic and live
+//  guidance come from the Google Navigation SDK; place search comes from Google
+//  Places autocomplete. ReTripper keeps the stops, saved/recent places, status
+//  and progress, and publishes navigation events for alerts, voice and any
+//  future (verified) dashboard output.
 //
 
 import Foundation
@@ -15,9 +18,37 @@ enum NavigationEvent: Equatable {
     case stepAdvanced(RouteProgress)
     case offRoute
     case rerouted
-    case rerouteFailed(String)
     case arrived(String)
+    case failed(String)
     case stopped
+}
+
+/// Place search used by the destination screen.
+@MainActor
+protocol PlaceSearchProvider: AnyObject {
+    func suggestions(for query: String, near: CLLocationCoordinate2D?) async throws -> [Destination]
+    func finishSession()
+}
+
+extension GooglePlacesSearch: PlaceSearchProvider {}
+
+/// Commands sent to the navigation engine (the Google Navigation SDK map).
+@MainActor
+protocol NavigationEngineControl: AnyObject {
+    var isReady: Bool { get }
+    var notReadyReason: String { get }
+    var onUpdate: ((GoogleNavigationUpdate) -> Void)? { get set }
+    func previewRoute(stops: [Destination])
+    func startGuidance()
+    func stopGuidance()
+}
+
+extension GoogleNavigationController: NavigationEngineControl {
+    var isReady: Bool { status == .ready && mapView != nil }
+    var notReadyReason: String {
+        if status == .ready && mapView == nil { return "Open the Map view once so Google Maps can load." }
+        return status.summary
+    }
 }
 
 @MainActor
@@ -73,32 +104,31 @@ final class DestinationStore: ObservableObject {
 
 @MainActor
 final class NavigationManager: ObservableObject {
-    static let shared = NavigationManager()
+    static let shared = NavigationManager(engine: GoogleNavigationController.shared, search: GooglePlacesSearch())
 
     @Published private(set) var status: NavigationStatus = .idle
-    @Published var stops: [Destination] = []
-    @Published private(set) var candidateRoutes: [NavRoute] = []
-    @Published var selectedRouteIndex: Int = 0
-    @Published private(set) var activeRoute: NavRoute?
+    @Published private(set) var stops: [Destination] = []
     @Published private(set) var progress: RouteProgress?
-    @Published private(set) var engine: NavigationEngine = .appleMapKit
     @Published private(set) var lastError: String?
 
     let events = PassthroughSubject<NavigationEvent, Never>()
+    let engineName = "Google Maps Navigation SDK"
 
-    private let provider: NavigationRouteProvider
-    private var tracker: RouteProgressTracker?
-    private var lastRerouteAt: Date?
-    private var lastAnnouncedStep: Int = -1
-    private let minimumRerouteInterval: TimeInterval = 15
+    private let engine: NavigationEngineControl
+    private let searchProvider: PlaceSearchProvider
+    private let store: DestinationStore
+    private var initialRemainingMeters: Double?
+    private var stepCounter = 0
 
-    init(provider: NavigationRouteProvider = MapKitRouteProvider()) {
-        self.provider = provider
+    init(engine: NavigationEngineControl, search: PlaceSearchProvider, store: DestinationStore = .shared) {
+        self.engine = engine
+        self.searchProvider = search
+        self.store = store
+        engine.onUpdate = { [weak self] update in self?.apply(update) }
     }
 
-    var selectedRoute: NavRoute? {
-        candidateRoutes.indices.contains(selectedRouteIndex) ? candidateRoutes[selectedRouteIndex] : nil
-    }
+    var isEngineReady: Bool { engine.isReady }
+    var engineNotReadyReason: String { engine.notReadyReason }
 
     // MARK: Search
 
@@ -106,9 +136,9 @@ final class NavigationManager: ObservableObject {
         if let shared = DestinationLinkParser.parse(query) { return [shared] }
         do {
             lastError = nil
-            return try await provider.searchDestinations(query: query, near: near)
+            return try await searchProvider.suggestions(for: query, near: near)
         } catch {
-            lastError = error.localizedDescription
+            lastError = "Google Places search failed: \(error.localizedDescription)"
             return []
         }
     }
@@ -117,151 +147,115 @@ final class NavigationManager: ObservableObject {
 
     func setDestination(_ d: Destination) {
         stops = [d]
-        DestinationStore.shared.addRecent(d)
+        store.addRecent(d)
+        searchProvider.finishSession()
     }
 
     func addWaypoint(_ d: Destination) {
         guard stops.count < 8 else { return }
         // Waypoints go before the final destination.
         if stops.isEmpty { stops = [d] } else { stops.insert(d, at: stops.count - 1) }
-        DestinationStore.shared.addRecent(d)
+        store.addRecent(d)
+        searchProvider.finishSession()
     }
 
     func removeStop(at index: Int) {
         guard stops.indices.contains(index) else { return }
         stops.remove(at: index)
+        if stops.isEmpty { stopNavigation() }
     }
 
-    // MARK: Routing (MapKit engine)
+    // MARK: Routing
 
-    func calculateRoutes(from origin: CLLocationCoordinate2D) async {
+    /// Asks Google for routes (with alternatives) and shows them on the map.
+    func previewRoute() {
         guard !stops.isEmpty else { return }
-        engine = .appleMapKit
-        status = .calculating
-        lastError = nil
-        do {
-            candidateRoutes = try await provider.calculateRoutes(from: origin, stops: stops)
-            selectedRouteIndex = 0
-            status = .preview
-        } catch {
-            candidateRoutes = []
-            lastError = error.localizedDescription
-            status = .failed(error.localizedDescription)
+        guard engine.isReady else {
+            fail(engine.notReadyReason)
+            return
         }
+        lastError = nil
+        status = .calculating
+        engine.previewRoute(stops: stops)
     }
 
     func startGuidance() {
-        guard let route = selectedRoute else { return }
-        activate(route)
-        events.send(.started)
-    }
-
-    private func activate(_ route: NavRoute) {
-        activeRoute = route
-        tracker = RouteProgressTracker(route: route)
-        progress = nil
-        lastAnnouncedStep = -1
+        guard engine.isReady, !stops.isEmpty else {
+            fail(engine.notReadyReason)
+            return
+        }
+        if status == .idle || status == .calculating {
+            // Destinations not yet sent: the engine starts guidance once a route exists.
+            engine.previewRoute(stops: stops)
+        }
+        engine.startGuidance()
         status = .navigating
+        initialRemainingMeters = nil
+        stepCounter = 0
+        progress = nil
+        events.send(.started)
     }
 
     func stopNavigation() {
-        let wasActive = status.isActive || engine == .googleNavigationSDK
-        activeRoute = nil
-        tracker = nil
-        progress = nil
-        candidateRoutes = []
+        let wasActive = status != .idle
+        engine.stopGuidance()
         stops = []
+        progress = nil
         status = .idle
-        engine = .appleMapKit
+        initialRemainingMeters = nil
         if wasActive { events.send(.stopped) }
     }
 
-    /// Feed live locations while navigating with the MapKit engine.
-    func update(location: CLLocation) {
-        guard engine == .appleMapKit, status.isActive, var tracker = tracker else { return }
-        let outcome = tracker.update(with: location.coordinate, accuracy: location.horizontalAccuracy)
-        self.tracker = tracker
-        switch outcome {
-        case .onRoute(let p):
-            progress = p
-            if status == .rerouting { status = .navigating }
-            if p.stepIndex != lastAnnouncedStep {
-                lastAnnouncedStep = p.stepIndex
-                events.send(.stepAdvanced(p))
-            }
-        case .offRoute:
-            events.send(.offRoute)
-            reroute(from: location)
-        case .arrived:
-            let name = activeRoute?.stops.last?.name ?? "destination"
-            status = .arrived
-            progress = nil
-            events.send(.arrived(name))
-        case .noGeometry:
-            break
-        }
+    private func fail(_ message: String) {
+        lastError = message
+        status = .failed(message)
+        events.send(.failed(message))
     }
 
-    private func reroute(from location: CLLocation) {
-        if let last = lastRerouteAt, Date().timeIntervalSince(last) < minimumRerouteInterval { return }
-        guard let route = activeRoute else { return }
-        lastRerouteAt = Date()
-        status = .rerouting
-        let remainingStops = route.stops
-        Task {
-            do {
-                let routes = try await provider.calculateRoutes(from: location.coordinate, stops: remainingStops)
-                guard self.status == .rerouting, let best = routes.first else { return }
-                self.activate(best)
-                self.events.send(.rerouted)
-            } catch {
-                self.lastError = error.localizedDescription
-                self.status = .navigating   // keep guiding on the old route
-                self.events.send(.rerouteFailed(error.localizedDescription))
-            }
-        }
-    }
+    // MARK: Engine updates
 
-    // MARK: Google engine bridge
-
-    /// Starts guidance driven by the embedded Google Navigation SDK map.
-    func startGoogleGuidance() {
-        guard !stops.isEmpty else { return }
-        engine = .googleNavigationSDK
-        activeRoute = nil
-        tracker = nil
-        status = .navigating
-        events.send(.started)
-    }
-
-    func applyGoogleUpdate(_ update: GoogleNavigationUpdate) {
-        guard engine == .googleNavigationSDK else { return }
+    func apply(_ update: GoogleNavigationUpdate) {
         if let failure = update.routeFailed {
-            status = .failed(failure)
-            lastError = failure
+            fail(failure)
             return
         }
+        if update.routeReady {
+            if status == .calculating { status = .preview }
+            return
+        }
+        guard status.isActive || status == .preview else { return }
         if update.arrived {
             status = .arrived
             progress = nil
             events.send(.arrived(stops.last?.name ?? "destination"))
             return
         }
+        guard status.isActive else { return }
+
         let wasRerouting = status == .rerouting
         status = update.isRerouting ? .rerouting : .navigating
         if update.isRerouting && !wasRerouting { events.send(.offRoute) }
+        if !update.isRerouting && wasRerouting {
+            initialRemainingMeters = nil
+            events.send(.rerouted)
+        }
+
         guard let instruction = update.instruction else { return }
+        let remaining = max(0, update.remainingMeters ?? 0)
+        if initialRemainingMeters == nil, remaining > 0 { initialRemainingMeters = remaining }
+        let total = initialRemainingMeters ?? remaining
+        let advanced = progress?.nextInstruction != instruction
+        if advanced && progress != nil { stepCounter += 1 }
+
         let p = RouteProgress(
-            stepIndex: progress.map { $0.nextInstruction == instruction ? $0.stepIndex : $0.stepIndex + 1 } ?? 0,
+            stepIndex: stepCounter,
             nextManeuver: Maneuver.parse(instruction: instruction),
             nextInstruction: instruction,
-            nextRoadName: update.roadName,
-            distanceToNextManeuverMeters: update.distanceToStepMeters ?? 0,
-            remainingDistanceMeters: update.remainingMeters ?? 0,
-            remainingSeconds: update.remainingSeconds ?? 0,
-            fractionComplete: 0,
-            distanceFromRouteMeters: 0)
-        let advanced = progress?.nextInstruction != instruction
+            nextRoadName: (update.roadName?.isEmpty ?? true) ? nil : update.roadName,
+            distanceToNextManeuverMeters: max(0, update.distanceToStepMeters ?? 0),
+            remainingDistanceMeters: remaining,
+            remainingSeconds: max(0, update.remainingSeconds ?? 0),
+            fractionComplete: total > 0 ? min(1, max(0, 1 - remaining / total)) : 0)
         progress = p
         if advanced { events.send(.stepAdvanced(p)) }
     }

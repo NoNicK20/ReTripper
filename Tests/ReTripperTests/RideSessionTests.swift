@@ -168,6 +168,26 @@ final class DashboardTests: XCTestCase {
         XCTAssertFalse(registry.output.send(.heading(degrees: 90)))
     }
 
+    func testNavigationFeedIsGatedUntilVerifiedProtocol() {
+        let feed = DashboardNavigationFeed(registry: {
+            DashboardCapabilityRegistry(protocolSupport: .notVerified, sessionEstablished: false)
+        })
+        let progress = RouteProgress(stepIndex: 0, nextManeuver: .left, nextInstruction: "Turn left",
+                                     nextRoadName: "MG Road", distanceToNextManeuverMeters: 200,
+                                     remainingDistanceMeters: 1000, remainingSeconds: 100, fractionComplete: 0.5)
+        XCTAssertFalse(feed.publish(progress: progress))
+        XCTAssertEqual(feed.sentCount, 0)
+        XCTAssertEqual(feed.lastMessage, .maneuver(symbol: "left", distanceMeters: 200, road: "MG Road"))
+    }
+
+    func testGoogleMapsWithoutKeyReportsMissingConfiguration() {
+        // Only meaningful when the test host was built without a key.
+        if AppSecretsConfiguration.googleMapsAPIKey == nil {
+            XCTAssertEqual(GoogleNavigationController.shared.status, .missingAPIKey)
+            XCTAssertNil(GoogleNavigationController.shared.makeOrReuseMapView())
+        }
+    }
+
     func testConnectionStateSemantics() {
         XCTAssertFalse(DashboardConnectionState.wifiConfigured(ssid: "RE").isAssociated)
         XCTAssertTrue(DashboardConnectionState.wifiAssociated(ssid: "RE").isAssociated)
@@ -199,7 +219,7 @@ final class RideSessionLifecycleTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("session-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         let meter = TripMeterManager(storageURL: url)
-        let session = RideSessionManager(tripMeter: meter, navigation: NavigationManager(provider: FakeRouteProvider()))
+        let session = RideSessionManager(tripMeter: meter, navigation: makeNavigationManager())
 
         XCTAssertEqual(session.rideState, .idle)
         session.startRide()
@@ -230,7 +250,7 @@ final class RideSessionLifecycleTests: XCTestCase {
         first.persist(rideState: .recording, rideStartedAt: Date())
 
         let session = RideSessionManager(tripMeter: TripMeterManager(storageURL: url),
-                                         navigation: NavigationManager(provider: FakeRouteProvider()))
+                                         navigation: makeNavigationManager())
         XCTAssertEqual(session.rideState, .paused)
         XCTAssertTrue(session.recoveredFromInterruption)
         session.discardRecoveredRide()
@@ -240,7 +260,7 @@ final class RideSessionLifecycleTests: XCTestCase {
     func testPhoneFeaturesWorkWithoutMotorcycle() {
         let session = RideSessionManager(tripMeter: TripMeterManager(storageURL: FileManager.default.temporaryDirectory
                                             .appendingPathComponent("s-\(UUID().uuidString).json")),
-                                         navigation: NavigationManager(provider: FakeRouteProvider()))
+                                         navigation: makeNavigationManager())
         XCTAssertFalse(session.dashboard.state.isSessionActive)
         session.startRide()
         XCTAssertEqual(session.rideState, .recording)
