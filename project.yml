@@ -60,6 +60,7 @@ targets:
         NSLocationWhenInUseUsageDescription: "ReTripper uses your location to record ride distance and time, show your position on the map, give turn-by-turn directions and show your compass course."
         NSLocationAlwaysAndWhenInUseUsageDescription: "ReTripper keeps recording your ride and guiding you while the screen is locked. Location is never shared or uploaded by ReTripper."
         NSAppleMusicUsageDescription: "ReTripper shows the current Apple Music track and lets you play, pause and skip during rides."
+        NSLocalNetworkUsageDescription: "ReTripper talks to your Royal Enfield Tripper Dash over the motorcycle's own Wi-Fi to pair with the dashboard and show navigation on it."
         UIBackgroundModes:
           - location
           - audio

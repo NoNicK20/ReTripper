@@ -89,6 +89,13 @@ class DashboardConnectionManager: ObservableObject {
     /// Royal Enfield has not published the Tripper Dash protocol, so this stays `.notVerified`.
     let protocolSupport: DashboardProtocolSupport = .notVerified
 
+    /// The real control-plane link to the dash (community K1G protocol).
+    let dashLink = DashLink()
+    private var cancellables = Set<AnyCancellable>()
+    /// SSID captured when a dash session attempt starts, so link-state
+    /// changes can be reflected back onto the manager's own state.
+    private var sessionSSID: String?
+
     /// True only when iOS has confirmed the phone is on the motorcycle Wi-Fi network.
     /// This is Wi-Fi association only — it does NOT mean an authenticated dashboard session.
     var isConnected: Bool { state.isAssociated }
@@ -98,6 +105,32 @@ class DashboardConnectionManager: ObservableObject {
     init() {
         if let saved = UserDefaults.standard.string(forKey: userDefaultsKey), !saved.isEmpty {
             self.lastKnownSSID = saved
+        }
+        dashLink.$state
+            .sink { [weak self] linkState in self?.applyDashLinkState(linkState) }
+            .store(in: &cancellables)
+    }
+
+    /// Mirror the dash link's state onto the manager's own connection state,
+    /// which the UI binds to.
+    private func applyDashLinkState(_ linkState: DashLink.State) {
+        guard let ssid = sessionSSID ?? state.ssid ?? lastKnownSSID else { return }
+        switch linkState {
+        case .idle:
+            break
+        case .connecting, .handshaking:
+            isVerifyingSession = true
+            state = .dashboardAuthRequired(ssid: ssid)
+            diagnosticMessage = dashLink.lastMessage
+        case .connected:
+            isVerifyingSession = false
+            state = .dashboardSessionEstablished(ssid: ssid)
+            diagnosticMessage = dashLink.lastMessage ?? "Connected to the dashboard."
+        case .failed(let message):
+            isVerifyingSession = false
+            // A dash-session failure doesn't drop the Wi-Fi association.
+            state = .wifiAssociated(ssid: ssid)
+            diagnosticMessage = message
         }
     }
 
@@ -207,11 +240,20 @@ class DashboardConnectionManager: ObservableObject {
             }
             return
         }
+        // Establish the real control-plane session (community K1G protocol).
+        // DashLink runs the initial burst, RSA handshake and 1 Hz heartbeat;
+        // applyDashLinkState() reflects its progress onto `state`.
+        sessionSSID = ssid
+        isVerifyingSession = true
+        diagnosticMessage = "Pairing with the dashboard…"
+        dashLink.connect(ssid: ssid)
+    }
 
-        switch protocolSupport {
-        case .notVerified:
-            isVerifyingSession = false
-            diagnosticMessage = "Wi-Fi link to \(ssid) is confirmed, but a dashboard session cannot be established: Royal Enfield has not published the Tripper Dash communication protocol, and ReTripper will not guess endpoints or credentials. Phone-side ride features keep working without it."
+    /// End the dash session (if any) without forgetting the Wi-Fi.
+    func endDashboardSession() {
+        dashLink.disconnect()
+        if let ssid = sessionSSID ?? state.ssid {
+            state = .wifiAssociated(ssid: ssid)
         }
     }
 
@@ -267,6 +309,8 @@ class DashboardConnectionManager: ObservableObject {
 
     /// Disconnects the current session.
     func disconnect() {
+        dashLink.disconnect()
+        sessionSSID = nil
         self.state = .wifiDisconnected
         self.diagnosticMessage = "Disconnected from motorcycle dashboard."
     }
