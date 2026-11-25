@@ -179,6 +179,33 @@ struct DashboardConnectSheet: View {
 struct ConnectionStatusCard: View {
     @EnvironmentObject private var connectionManager: DashboardConnectionManager
 
+    private var projectionActive: Bool {
+        switch connectionManager.projectionState {
+        case .starting, .projecting: return true
+        case .idle, .failed: return false
+        }
+    }
+
+    private var projectionButtonTitle: String {
+        switch connectionManager.projectionState {
+        case .idle: return "Show Map on Dash"
+        case .starting: return "Starting…"
+        case .projecting: return "Stop Map on Dash"
+        case .failed: return "Retry Map on Dash"
+        }
+    }
+
+    private var projectionNote: String? {
+        switch connectionManager.projectionState {
+        case .projecting:
+            return "Streaming the map to the dashboard screen."
+        case .failed(let message):
+            return message
+        case .idle, .starting:
+            return nil
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -227,7 +254,7 @@ struct ConnectionStatusCard: View {
 
                 case .wifiAssociated(let ssid):
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Phone is on Wi-Fi network '\(ssid)'. No dashboard session: the Tripper Dash protocol is not published, so data exchange is unavailable.")
+                        Text("Phone is on Wi-Fi network '\(ssid)'. Pair with the dashboard to show navigation on the Tripper Dash.")
                             .font(.system(size: 12))
                             .foregroundColor(Theme.textSecondary)
 
@@ -250,14 +277,36 @@ struct ConnectionStatusCard: View {
                     }
 
                 case .dashboardAuthRequired:
-                    Text("Wi-Fi associated. Verifying communication protocol with Tripper Dash...")
+                    Text(connectionManager.diagnosticMessage ?? "Pairing with the Tripper Dash…")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textSecondary)
 
                 case .dashboardSessionEstablished:
-                    Text("Tripper Dash session active. Ready for navigation, media, and trip data exchange.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.textSecondary)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Dashboard connected. Show the ReTripper map on the Tripper Dash screen.")
+                            .font(.system(size: 12))
+                            .foregroundColor(Theme.textSecondary)
+
+                        Button(action: { connectionManager.toggleProjection() }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: projectionActive ? "stop.fill" : "play.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                Text(projectionButtonTitle)
+                                    .font(.system(size: 13, weight: .bold))
+                            }
+                            .foregroundColor(Theme.textPrimary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(projectionActive ? Theme.surfaceElevated : Theme.apexRed)
+                            .clipShape(Capsule())
+                        }
+
+                        if let note = projectionNote {
+                            Text(note)
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.textTertiary)
+                        }
+                    }
 
                 case .failed(let err):
                     Text(err)

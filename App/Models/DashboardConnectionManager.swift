@@ -91,6 +91,9 @@ class DashboardConnectionManager: ObservableObject {
 
     /// The real control-plane link to the dash (community K1G protocol).
     let dashLink = DashLink()
+    /// Streams the ReTripper map to the dash screen once a session is up.
+    private var projection: DashProjection?
+    @Published private(set) var projectionState: DashProjection.State = .idle
     private var cancellables = Set<AnyCancellable>()
     /// SSID captured when a dash session attempt starts, so link-state
     /// changes can be reflected back onto the manager's own state.
@@ -109,6 +112,21 @@ class DashboardConnectionManager: ObservableObject {
         dashLink.$state
             .sink { [weak self] linkState in self?.applyDashLinkState(linkState) }
             .store(in: &cancellables)
+
+        let projection = DashProjection(link: dashLink)
+        self.projection = projection
+        projection.$state
+            .sink { [weak self] s in self?.projectionState = s }
+            .store(in: &cancellables)
+    }
+
+    /// Start or stop streaming the ReTripper map to the dash screen.
+    func toggleProjection() {
+        guard let projection else { return }
+        switch projection.state {
+        case .idle, .failed: projection.start()
+        case .starting, .projecting: projection.stop()
+        }
     }
 
     /// Mirror the dash link's state onto the manager's own connection state,
@@ -309,6 +327,7 @@ class DashboardConnectionManager: ObservableObject {
 
     /// Disconnects the current session.
     func disconnect() {
+        projection?.stop()
         dashLink.disconnect()
         sessionSSID = nil
         self.state = .wifiDisconnected
