@@ -52,6 +52,8 @@ Go to **APIs & Services → Library** and enable these three:
 2. **Navigation SDK** (if you can't enable it, your account may need Google's
    approval. Follow the console's prompt or contact Google Maps Platform sales.)
 3. **Places API (New)**
+4. **Map Tiles API** — used to draw the map that ReTripper streams to the
+   Tripper Dash screen. Billed per tile, so keep the quotas in step 7 tight.
 
 ## 5. Create and restrict the API key
 
@@ -60,7 +62,8 @@ Go to **APIs & Services → Library** and enable these three:
    - **Application restrictions:** choose **iOS apps** and add the bundle ID
      `com.nonick20.retripper`.
    - **API restrictions:** choose **Restrict key** and select only
-     *Maps SDK for iOS*, *Navigation SDK* and *Places API (New)*.
+     *Maps SDK for iOS*, *Navigation SDK*, *Places API (New)* and
+     *Map Tiles API*.
 3. Click **Save** and copy the key.
 
 Important: iOS map keys are built into the app file, so anyone with the app file can

@@ -41,7 +41,7 @@ final class DashProjection: ObservableObject {
         }
         guard state == .idle || isFailed else { return }
         state = .starting
-        let frames = source ?? TestPatternFrameSource()
+        let frames = source ?? DashProjection.defaultSource()
 
         Task { [weak self] in
             guard let self else { return }
@@ -79,4 +79,12 @@ final class DashProjection: ObservableObject {
     }
 
     private var isFailed: Bool { if case .failed = state { return true }; return false }
+
+    /// The real Google map when a Maps key is configured, otherwise the
+    /// animated test pattern (so the pipeline is still visible on the dash).
+    static func defaultSource() -> FrameSource {
+        AppSecretsConfiguration.googleMapsAPIKey != nil
+            ? GoogleMapFrameSource()
+            : TestPatternFrameSource()
+    }
 }
