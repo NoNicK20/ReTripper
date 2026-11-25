@@ -25,6 +25,14 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
     let frameSize = CGSize(width: 526, height: 300)
     let targetFps = 4
     var zoom = 16
+    /// Heading-up (map rotates so travel direction is up). false = north-up.
+    var headingUp = true
+
+    /// World-pixel radius that must be covered so the rotated 526×300 frame
+    /// never shows a corner gap, plus a tile of margin.
+    private var coverRadius: Double {
+        (sqrt(pow(Double(frameSize.width), 2) + pow(Double(frameSize.height), 2)) / 2) + WebMercator.tileSize
+    }
 
     private let fetcher: GoogleTileFetcher
     private let locationManager = CLLocationManager()
@@ -101,18 +109,20 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
         }
     }
 
-    /// Tile keys covering the 526×300 window around `center` (plus a ring).
+    /// Range of tile indices covering a `coverRadius` square around the rider.
+    private func tileRange(center c: CGPoint) -> (minTX: Int, maxTX: Int, minTY: Int, maxTY: Int) {
+        let ts = WebMercator.tileSize
+        return (Int(floor((c.x - coverRadius) / ts)), Int(floor((c.x + coverRadius) / ts)),
+                Int(floor((c.y - coverRadius) / ts)), Int(floor((c.y + coverRadius) / ts)))
+    }
+
+    /// Tile keys covering the rotated window around `center`.
     private func tileKeys(center: CLLocationCoordinate2D) -> [GoogleTileFetcher.TileKey] {
         let c = WebMercator.worldPixel(center, zoom: zoom)
-        let originX = c.x - Double(frameSize.width) / 2
-        let originY = c.y - Double(frameSize.height) / 2
-        let minTX = Int(floor(originX / WebMercator.tileSize)) - 1
-        let maxTX = Int(floor((originX + Double(frameSize.width)) / WebMercator.tileSize)) + 1
-        let minTY = Int(floor(originY / WebMercator.tileSize)) - 1
-        let maxTY = Int(floor((originY + Double(frameSize.height)) / WebMercator.tileSize)) + 1
+        let r = tileRange(center: c)
         var keys: [GoogleTileFetcher.TileKey] = []
-        for ty in minTY...maxTY {
-            for tx in minTX...maxTX {
+        for ty in r.minTY...r.maxTY {
+            for tx in r.minTX...r.maxTX {
                 if let w = WebMercator.wrap(x: tx, y: ty, zoom: zoom) {
                     keys.append(.init(z: zoom, x: w.x, y: w.y))
                 }
@@ -143,21 +153,31 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
             return
         }
 
-        // Draw tiles (north-up). Context is y-up; flip each tile to draw upright.
+        // Context is y-up; "up" (+y) is the top of the frame. The rider sits
+        // at the frame centre. For heading-up, rotate the map CCW by the
+        // heading so the travel direction points up; the rider chevron then
+        // stays pointing up. For north-up, the map isn't rotated and the
+        // chevron rotates to the heading instead.
         let c = WebMercator.worldPixel(coord, zoom: zoom)
-        let originX = c.x - Double(w) / 2         // world px at screen-left
-        let originY = c.y - Double(h) / 2         // world px at screen-top (north)
+        let originX = c.x - Double(w) / 2         // world px at screen-left (pre-rotation)
+        let originY = c.y - Double(h) / 2         // world px at screen-top
         let ts = WebMercator.tileSize
-        let minTX = Int(floor(originX / ts)), maxTX = Int(floor((originX + Double(w)) / ts))
-        let minTY = Int(floor(originY / ts)), maxTY = Int(floor((originY + Double(h)) / ts))
+        let r = tileRange(center: c)
+
+        ctx.saveGState()
+        if headingUp {
+            ctx.translateBy(x: Double(w) / 2, y: Double(h) / 2)
+            ctx.rotate(by: headingDegrees * .pi / 180.0)   // y-up CCW = heading-up
+            ctx.translateBy(x: -Double(w) / 2, y: -Double(h) / 2)
+        }
         var anyTile = false
-        for ty in minTY...maxTY {
-            for tx in minTX...maxTX {
+        for ty in r.minTY...r.maxTY {
+            for tx in r.minTX...r.maxTX {
                 guard let wk = WebMercator.wrap(x: tx, y: ty, zoom: zoom),
                       let img = tileMirror[.init(z: zoom, x: wk.x, y: wk.y)] else { continue }
                 anyTile = true
-                let sx = Double(tx) * ts - originX                    // screen x, left→right
-                let imgTopScreen = Double(ty) * ts - originY          // screen y from top (north)
+                let sx = Double(tx) * ts - originX
+                let imgTopScreen = Double(ty) * ts - originY
                 ctx.saveGState()
                 ctx.translateBy(x: sx, y: Double(h) - imgTopScreen)   // tile top-left in y-up ctx
                 ctx.scaleBy(x: 1, y: -1)                              // draw image upright
@@ -165,6 +185,7 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
                 ctx.restoreGState()
             }
         }
+        ctx.restoreGState()
 
         if !anyTile {
             drawCentreText("Loading map… (needs Map Tiles API + a Google Maps key)",
@@ -178,7 +199,10 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
     private func drawRiderMarker(in ctx: CGContext, center: CGPoint) {
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
-        ctx.rotate(by: -headingDegrees * .pi / 180.0)   // y-up ctx: clockwise heading = negative
+        // Heading-up: map is rotated, so the rider always points up (no
+        // rotation). North-up: rotate the chevron to the heading (clockwise =
+        // negative in a y-up context).
+        if !headingUp { ctx.rotate(by: -headingDegrees * .pi / 180.0) }
         ctx.beginPath()
         ctx.move(to: CGPoint(x: 0, y: 16))              // apex points "up" (north when heading 0)
         ctx.addLine(to: CGPoint(x: -11, y: -12))
