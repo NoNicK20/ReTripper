@@ -50,3 +50,32 @@ final class WebMercatorTests: XCTestCase {
         XCTAssertEqual(south.y, 256, accuracy: 0.01)
     }
 }
+
+final class GoogleTileFailureMessageTests: XCTestCase {
+
+    private func message(_ status: Int?, _ googleMessage: String? = nil) -> String {
+        var json: [String: Any]? = nil
+        if let googleMessage { json = ["error": ["message": googleMessage]] }
+        return GoogleTileFetcher.describeFailure(status: status, json: json)
+    }
+
+    func test403DisabledApiIsExplained() {
+        let m = message(403, "Map Tiles API has not been used in project 123 before or it is disabled.")
+        XCTAssertTrue(m.localizedCaseInsensitiveContains("not enabled"), m)
+    }
+
+    func test403KeyRestrictionIsExplained() {
+        let m = message(403, "Requests to this API are blocked due to the API key restriction.")
+        XCTAssertTrue(m.localizedCaseInsensitiveContains("restricted"), m)
+    }
+
+    func test403GenericStillMentionsRestrictions() {
+        let m = message(403)
+        XCTAssertTrue(m.contains("403"), m)
+    }
+
+    func testQuotaAndNoResponse() {
+        XCTAssertTrue(message(429).contains("429"))
+        XCTAssertTrue(message(nil).localizedCaseInsensitiveContains("no response"))
+    }
+}

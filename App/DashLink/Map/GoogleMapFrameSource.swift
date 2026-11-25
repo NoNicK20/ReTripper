@@ -44,6 +44,9 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
     private var headingDegrees: Double = 0
     private var tileMirror: [GoogleTileFetcher.TileKey: CGImage] = [:]
     private var refreshing = false
+    /// Plain-language reason the map tiles aren't loading (from the fetcher),
+    /// shown on the frame so the cause is visible on the dash itself.
+    private var tileDiagnostic: String?
 
     private let apexRed = CGColor(red: 0.86, green: 0.08, blue: 0.09, alpha: 1)
 
@@ -102,8 +105,10 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
         Task { [weak self] in
             await fetcher.prefetch(keys)
             let images = await fetcher.images(keys)
+            let diagnostic = await fetcher.lastSessionError
             await MainActor.run { [weak self] in
                 self?.tileMirror = images
+                self?.tileDiagnostic = diagnostic
                 self?.refreshing = false
             }
         }
@@ -188,7 +193,7 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
         ctx.restoreGState()
 
         if !anyTile {
-            drawCentreText("Loading map… (needs Map Tiles API + a Google Maps key)",
+            drawCentreText(tileDiagnostic ?? "Loading map…",
                            in: ctx, size: CGSize(width: w, height: h))
         } else {
             drawRiderMarker(in: ctx, center: CGPoint(x: Double(w) / 2, y: Double(h) / 2))
@@ -215,12 +220,23 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
     }
 
     private func drawCentreText(_ string: String, in ctx: CGContext, size: CGSize) {
-        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 18, nil)
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [.font: font]))
+        let maxWidth = size.width - 24
+        // Shrink the font until the line fits the frame width (down to 10pt).
+        var fontSize: CGFloat = 18
+        var line = makeLine(string, fontSize: fontSize)
+        while CTLineGetImageBounds(line, ctx).width > maxWidth && fontSize > 10 {
+            fontSize -= 1
+            line = makeLine(string, fontSize: fontSize)
+        }
         let bounds = CTLineGetImageBounds(line, ctx)
         ctx.setFillColor(CGColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1))
-        ctx.textPosition = CGPoint(x: (size.width - bounds.width) / 2, y: size.height / 2 - 6)
+        ctx.textPosition = CGPoint(x: max(12, (size.width - bounds.width) / 2), y: size.height / 2 - 6)
         CTLineDraw(line, ctx)
+    }
+
+    private func makeLine(_ string: String, fontSize: CGFloat) -> CTLine {
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
+        return CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: [.font: font]))
     }
 
     private func emit(_ buffer: CVPixelBuffer) {
