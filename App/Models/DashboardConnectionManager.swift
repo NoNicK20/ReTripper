@@ -121,7 +121,7 @@ class DashboardConnectionManager: ObservableObject {
         case .connecting, .handshaking:
             isVerifyingSession = true
             state = .dashboardAuthRequired(ssid: ssid)
-            diagnosticMessage = dashLink.lastMessage
+            diagnosticMessage = dashLink.lastMessage ?? "Pairing with the dashboard…"
         case .connected:
             isVerifyingSession = false
             state = .dashboardSessionEstablished(ssid: ssid)
