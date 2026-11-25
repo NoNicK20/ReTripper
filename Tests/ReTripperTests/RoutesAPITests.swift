@@ -36,9 +36,10 @@ final class RoutesAPIParsingTests: XCTestCase {
         XCTAssertEqual(result.distanceMeters, 12000, accuracy: 0.001)
         XCTAssertEqual(result.durationSeconds, 1500, accuracy: 0.001)
         XCTAssertEqual(result.steps.count, 2)
-        XCTAssertEqual(result.steps.first?.maneuver, "TURN_RIGHT")
-        XCTAssertTrue(result.steps.first?.instruction.contains("MG Road") ?? false)
-        XCTAssertEqual(result.steps.first?.distanceMeters, 300, accuracy: 0.001)
+        let firstStep = try XCTUnwrap(result.steps.first)
+        XCTAssertEqual(firstStep.maneuver, "TURN_RIGHT")
+        XCTAssertTrue(firstStep.instruction.contains("MG Road"))
+        XCTAssertEqual(firstStep.distanceMeters, 300, accuracy: 0.001)
     }
 
     func testEmptyRoutesThrowsNoRoute() {

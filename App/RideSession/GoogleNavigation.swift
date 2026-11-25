@@ -100,8 +100,18 @@ final class GoogleNavigationController: NSObject, ObservableObject {
     private var routePolylines: [GMSPolyline] = []
     private(set) var lastRouteInfo: RouteResult?
 
+    /// Live turn-by-turn, built on the Routes API route + the rider's GPS.
+    private let guidanceLocation = CLLocationManager()
+    private var tracker: RouteTracker?
+    private var guiding = false
+    private var rerouting = false
+    private var offRouteStreak = 0
+    private static let offRouteMeters: CLLocationDistance = 45
+
     override init() {
         super.init()
+        guidanceLocation.delegate = self
+        guidanceLocation.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         refreshStatus()
     }
 
@@ -232,7 +242,8 @@ final class GoogleNavigationController: NSObject, ObservableObject {
 
     private func applyRoute(_ result: RouteResult) {
         lastRouteInfo = result
-        drawRoute(result.encodedPolyline)
+        drawRoute(result.encodedPolyline, frame: !guiding)
+        if guiding { tracker = RouteTracker(route: result) }
         let km = result.distanceMeters / 1000
         let minutes = Int((result.durationSeconds / 60).rounded())
         lastRouteDiagnostic = String(format: "Route OK — %.1f km, ~%d min (Routes API)", km, minutes)
@@ -248,8 +259,10 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false, routeFailed: friendly))
     }
 
-    /// Draws the route line on the map and frames it. Replaces any existing line.
-    private func drawRoute(_ encoded: String) {
+    /// Draws the route line on the map. When `frame` is true (preview) it fits
+    /// the whole route in view; during guidance the camera keeps following the
+    /// rider, so framing is skipped.
+    private func drawRoute(_ encoded: String, frame: Bool = true) {
         clearRoute()
         guard let mapView, let path = GMSPath(fromEncodedPath: encoded) else { return }
         let line = GMSPolyline(path: path)
@@ -258,9 +271,11 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         line.zIndex = 5
         line.map = mapView
         routePolylines = [line]
-        mapView.cameraMode = .free
-        let bounds = GMSCoordinateBounds(path: path)
-        mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 56))
+        if frame {
+            mapView.cameraMode = .free
+            let bounds = GMSCoordinateBounds(path: path)
+            mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 56))
+        }
     }
 
     private func clearRoute() {
@@ -269,18 +284,81 @@ final class GoogleNavigationController: NSObject, ObservableObject {
     }
 
     func startGuidance() {
-        // The route line stays drawn; follow the rider. Live turn-by-turn
-        // (step advancement, voice, rerouting) is built on the Routes API
-        // steps in a follow-up — the Navigation SDK's guidance isn't used.
-        mapView?.cameraMode = .following
+        // Live turn-by-turn from the Routes API route + the rider's GPS.
+        guiding = true
+        offRouteStreak = 0
+        rerouting = false
+        if let info = lastRouteInfo { tracker = RouteTracker(route: info) }
+        guidanceLocation.requestWhenInUseAuthorization()
+        guidanceLocation.startUpdatingLocation()
+        mapView?.cameraMode = .free
     }
 
     func stopGuidance() {
+        guiding = false
+        rerouting = false
+        offRouteStreak = 0
+        guidanceLocation.stopUpdatingLocation()
+        tracker = nil
         clearRoute()
         lastRouteInfo = nil
         lastRouteDiagnostic = nil
         appliedStops = []
         mapView?.cameraMode = .following
+    }
+
+    /// Called ~1 Hz with the rider's position while guiding. Emits the same
+    /// update shape the UI already consumes, and triggers a reroute when the
+    /// rider drifts off the line.
+    private func handleGuidanceLocation(_ coord: CLLocationCoordinate2D, course: CLLocationDirection) {
+        guard guiding else { return }
+        let bearing = course >= 0 ? course : 0
+        mapView?.animate(to: GMSCameraPosition(target: coord, zoom: 17, bearing: bearing, viewingAngle: 45))
+        guard let tracker else { return }
+        let snap = tracker.snapshot(for: coord)
+        if snap.arrived {
+            onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: true))
+            return
+        }
+        if snap.lateralOffset > Self.offRouteMeters {
+            offRouteStreak += 1
+            if offRouteStreak >= 3 && !rerouting { reroute(from: coord) }
+        } else {
+            offRouteStreak = 0
+        }
+        onUpdate?(GoogleNavigationUpdate(
+            instruction: snap.instruction.isEmpty ? "Continue" : snap.instruction,
+            roadName: nil,
+            distanceToStepMeters: snap.distanceToManeuver,
+            remainingMeters: snap.remainingDistance,
+            remainingSeconds: snap.remainingDuration,
+            isRerouting: rerouting,
+            arrived: false))
+    }
+
+    /// Recomputes the route from the rider's current position to the final
+    /// destination when they've gone off route.
+    private func reroute(from coord: CLLocationCoordinate2D) {
+        guard let last = appliedStops.last else { return }
+        rerouting = true
+        offRouteStreak = 0
+        lastRouteDiagnostic = "Off route — recalculating…"
+        let destination = RoutesAPIClient.Waypoint(coordinate: last.coordinate, placeID: last.placeID)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await self.computeWithFallback(origin: coord, destination: destination,
+                                                                intermediates: [])
+                self.lastRouteInfo = result
+                self.drawRoute(result.encodedPolyline, frame: false)
+                self.tracker = RouteTracker(route: result)
+                self.rerouting = false
+                self.lastRouteDiagnostic = "Rerouted."
+            } catch {
+                self.rerouting = false
+                self.offRouteStreak = 0
+            }
+        }
     }
 
     func recenter() {
@@ -338,6 +416,15 @@ extension GoogleNavigationController: GMSNavigatorListener {
             self.suggestedLowLight = lowLight
             self.applyLighting()
         }
+    }
+}
+
+extension GoogleNavigationController: CLLocationManagerDelegate {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let loc = locations.last else { return }
+        let coord = loc.coordinate
+        let course = loc.course
+        Task { @MainActor in self.handleGuidanceLocation(coord, course: course) }
     }
 }
 
