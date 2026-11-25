@@ -42,8 +42,11 @@ final class WebMercatorTests: XCTestCase {
     }
 
     func testLatitudeClampsToMercatorLimit() {
+        // Latitudes past the Mercator limit clamp to the top edge (y ≈ 0),
+        // allowing for floating-point rounding around zero.
         let north = WebMercator.worldPixel(CLLocationCoordinate2D(latitude: 89, longitude: 0), zoom: 0)
-        XCTAssertGreaterThanOrEqual(north.y, 0)
-        XCTAssertLessThanOrEqual(north.y, 256)
+        XCTAssertEqual(north.y, 0, accuracy: 0.01)
+        let south = WebMercator.worldPixel(CLLocationCoordinate2D(latitude: -89, longitude: 0), zoom: 0)
+        XCTAssertEqual(south.y, 256, accuracy: 0.01)
     }
 }
