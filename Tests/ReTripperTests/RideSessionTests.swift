@@ -200,9 +200,15 @@ final class DashboardTests: XCTestCase {
         let manager = DashboardConnectionManager()
         manager.state = .wifiAssociated(ssid: "RE_TRIPPER")
         manager.verifyDashboardSession()
-        XCTAssertEqual(manager.state, .wifiAssociated(ssid: "RE_TRIPPER"))
+        // A REAL handshake starts (→ auth required). Without a real dash
+        // replying with auth-OK, the manager must never fake an established
+        // session.
+        XCTAssertEqual(manager.state, .dashboardAuthRequired(ssid: "RE_TRIPPER"))
         XCTAssertFalse(manager.state.isSessionActive)
         XCTAssertNotNil(manager.diagnosticMessage)
+        // Cancel the background link so no connect task lingers past the test.
+        manager.disconnect()
+        XCTAssertEqual(manager.state, .wifiDisconnected)
     }
 
     func testDisconnectReturnsToDisconnected() {

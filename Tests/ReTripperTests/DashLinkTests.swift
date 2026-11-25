@@ -13,20 +13,34 @@ import Security
 
 final class K1GCodecTests: XCTestCase {
 
-    func testEncodeDecodeRoundTrip() {
+    func testEncodeHeaderFields() {
         let segments = [
             K1GSegment(type: .session, sub: 0x04, payload: Data([0x01])),
             K1GSegment(type: .status, sub: 0x08, payload: Data([0xAB, 0xCD])),
         ]
         let packet = K1GPacket.encode(segments: segments, seq: 0x07)
-        // outer_len equals the real size.
-        XCTAssertEqual(Int(packet[0]) << 8 | Int(packet[1]), packet.count)
-        // seg_count = actual + 1.
-        XCTAssertEqual(Int(packet[2]) << 8 | Int(packet[3]), segments.count + 1)
-        // magic present.
-        XCTAssertNotNil(packet.range(of: Data(K1G.magic)))
-        let decoded = K1GPacket.decode(packet)
-        XCTAssertEqual(decoded, segments)
+        XCTAssertEqual(Int(packet[0]) << 8 | Int(packet[1]), packet.count)          // outer_len
+        XCTAssertEqual(Int(packet[2]) << 8 | Int(packet[3]), segments.count + 1)    // seg_count = actual + 1
+        XCTAssertNotNil(packet.range(of: Data(K1G.magic)))                          // magic present
+    }
+
+    func testDecodeRecoversSegmentsFromInboundForm() {
+        // Decode is for INBOUND dash packets, which omit the marker/magic/seq
+        // and start their first TLV at offset 8 (outbound packets carry the
+        // full header, so encode/decode are intentionally NOT symmetric).
+        let segments = [
+            K1GSegment(type: .session, sub: 0x04, payload: Data([0x01])),
+            K1GSegment(type: .status, sub: 0x08, payload: Data([0xAB, 0xCD])),
+        ]
+        var inbound = Data([0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00]) // 8-byte header
+        for seg in segments {
+            inbound.append(seg.type)
+            inbound.append(seg.sub)
+            inbound.append(contentsOf: K1GPacket.u16BE(UInt16(seg.payload.count)))
+            inbound.append(seg.payload)
+        }
+        inbound[0] = UInt8(inbound.count >> 8); inbound[1] = UInt8(inbound.count & 0xFF)
+        XCTAssertEqual(K1GPacket.decode(inbound), segments)
     }
 
     func testRequestPubkeyExactBytes() {
