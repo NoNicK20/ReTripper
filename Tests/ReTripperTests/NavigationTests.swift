@@ -152,6 +152,36 @@ final class NavigationManagerTests: XCTestCase {
         XCTAssertNil(nav.progress)
     }
 
+    /// Pressing Start while the preview is still calculating must NOT resend
+    /// the destinations: a second `setDestinations` cancels the first, which
+    /// Google reports as status 6 (`.canceled`) and used to surface as a
+    /// spurious "could not calculate a route" error.
+    func testStartWhileCalculatingDoesNotResendDestinations() {
+        let engine = FakeNavigationEngine()
+        let nav = makeNavigationManager(engine: engine)
+        nav.setDestination(fort)
+        nav.previewRoute()
+        XCTAssertEqual(nav.status, .calculating)
+        XCTAssertEqual(engine.previewed.count, 1)
+
+        // Route is still being calculated (no routeReady yet) when the rider
+        // taps Start.
+        nav.startGuidance()
+        XCTAssertEqual(engine.previewed.count, 1, "destinations must not be sent twice while calculating")
+        XCTAssertEqual(engine.guidanceStarted, 1)
+        XCTAssertEqual(nav.status, .navigating)
+    }
+
+    /// Start with no preview still has to send the destinations exactly once.
+    func testStartFromIdleSendsDestinationsOnce() {
+        let engine = FakeNavigationEngine()
+        let nav = makeNavigationManager(engine: engine)
+        nav.setDestination(fort)
+        nav.startGuidance()
+        XCTAssertEqual(engine.previewed.count, 1)
+        XCTAssertEqual(engine.guidanceStarted, 1)
+    }
+
     func testReroutingAndArrivalEvents() {
         let engine = FakeNavigationEngine()
         let nav = makeNavigationManager(engine: engine)

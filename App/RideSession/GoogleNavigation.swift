@@ -184,15 +184,46 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         let options = GMSNavigationRoutingOptions(alternateRoutesStrategy: .all)
         navigator.setDestinations(waypoints, routingOptions: options) { [weak self] routeStatus in
             guard let self else { return }
-            if routeStatus == .OK {
+            switch routeStatus {
+            case .OK:
                 if self.mapView?.navigator?.isGuidanceActive != true {
                     self.mapView?.cameraMode = .overview
                 }
                 self.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false, routeFailed: nil, routeReady: true))
-            } else {
+            case .canceled:
+                // Not a failure: a newer route request replaced this one (e.g.
+                // the user changed the stops, or guidance started while the
+                // preview was still calculating). The newer request's
+                // completion reports the real result, so stay silent here.
+                break
+            default:
                 self.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
-                                                      routeFailed: "Google could not calculate a route (status \(routeStatus.rawValue))."))
+                                                      routeFailed: Self.routeFailureMessage(routeStatus)))
             }
+        }
+    }
+
+    /// Plain-language explanation for a failed route request, for the
+    /// non-technical rider. The raw status is appended so support can map it
+    /// back to Google's `GMSRouteStatus` if needed.
+    static func routeFailureMessage(_ status: GMSRouteStatus) -> String {
+        switch status {
+        case .noRouteFound:
+            return "No route could be found to that destination. Try a nearby address or a different stop."
+        case .networkError:
+            return "Couldn't reach Google to calculate the route. Check your internet connection and try again."
+        case .quotaExceeded:
+            return "The daily Google Maps usage limit has been reached. Try again later."
+        case .apiKeyNotAuthorized:
+            return "The Google Maps key isn't authorized for navigation yet. The Navigation SDK must be enabled for this key."
+        case .duplicateWaypointsError, .noWaypointsError, .waypointError:
+            return "There was a problem with one of the stops. Remove it and add the destination again."
+        case .locationUnavailable:
+            return "Your location isn't available yet. Allow location access and wait for GPS, then try again."
+        case .travelModeUnsupported:
+            return "That travel mode isn't supported for this route."
+        default:
+            return "Google could not calculate a route (status \(status.rawValue))."
         }
     }
 

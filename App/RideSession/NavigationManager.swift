@@ -184,9 +184,16 @@ final class NavigationManager: ObservableObject {
             fail(engine.notReadyReason)
             return
         }
-        if status == .idle || status == .calculating {
-            // Destinations not yet sent: the engine starts guidance once a route exists.
+        switch status {
+        case .idle, .failed:
+            // Destinations were never sent (Start pressed without a preview, or
+            // after a previous failure): send them now. The engine begins
+            // guidance once a route exists. Don't resend while `.calculating` —
+            // a request is already in flight and resending cancels it (Google
+            // reports the first as `.canceled`, status 6).
             engine.previewRoute(stops: stops)
+        default:
+            break
         }
         engine.startGuidance()
         status = .navigating
