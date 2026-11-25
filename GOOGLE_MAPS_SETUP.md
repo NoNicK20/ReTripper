@@ -46,14 +46,18 @@ to the chosen Place ID, so it never makes a separate "Place Details" request.
 
 ## 4. Enable the APIs
 
-Go to **APIs & Services → Library** and enable these three:
+Go to **APIs & Services → Library** and enable these:
 
-1. **Maps SDK for iOS**
-2. **Navigation SDK** (if you can't enable it, your account may need Google's
-   approval. Follow the console's prompt or contact Google Maps Platform sales.)
-3. **Places API (New)**
-4. **Map Tiles API** — used to draw the map that ReTripper streams to the
-   Tripper Dash screen. Billed per tile, so keep the quotas in step 7 tight.
+1. **Maps SDK for iOS** — shows the live map in the app.
+2. **Routes API** — works out the route and turn-by-turn. This is the one that
+   draws the blue route line. It is self-serve (no Google approval needed).
+3. **Places API (New)** — the destination search box.
+4. **Map Tiles API** — draws the map that ReTripper streams to the Tripper Dash
+   screen. Billed per tile, so keep the quotas in step 7 tight.
+
+> ReTripper no longer uses the **Navigation SDK** (that one needs Google sales
+> approval and can't draw onto the dash). Routing now uses the self-serve
+> **Routes API** instead, so an ordinary Google Maps key is enough.
 
 ## 5. Create and restrict the API key
 
@@ -62,7 +66,7 @@ Go to **APIs & Services → Library** and enable these three:
    - **Application restrictions:** choose **iOS apps** and add the bundle ID
      `com.nonick20.retripper`.
    - **API restrictions:** choose **Restrict key** and select only
-     *Maps SDK for iOS*, *Navigation SDK*, *Places API (New)* and
+     *Maps SDK for iOS*, *Routes API*, *Places API (New)* and
      *Map Tiles API*.
 3. Click **Save** and copy the key.
 

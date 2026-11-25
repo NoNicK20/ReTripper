@@ -94,6 +94,12 @@ final class GoogleNavigationController: NSObject, ObservableObject {
     private var appliedStops: [Destination] = []
     private var suggestedLowLight = false
 
+    /// Self-serve routing (Routes API). ReTripper draws the route itself; the
+    /// gated Navigation SDK is no longer used to compute or render routes.
+    private let routes = RoutesAPIClient()
+    private var routePolylines: [GMSPolyline] = []
+    private(set) var lastRouteInfo: RouteResult?
+
     override init() {
         super.init()
         refreshStatus()
@@ -171,101 +177,108 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         mapView.padding = insets
     }
 
-    /// Requests routes (with alternatives) through all stops and shows them on the map.
+    /// Computes a route through all stops (via the self-serve Routes API) and
+    /// draws it on the map. ReTripper draws the line itself with GMSPolyline;
+    /// the gated Navigation SDK is no longer used for routing.
     func previewRoute(stops: [Destination]) {
-        let termsOK = GMSNavigationServices.areTermsAndConditionsAccepted()
-        let navEnabled = mapView?.isNavigationEnabled ?? false
-        guard let navigator = mapView?.navigator else {
-            lastRouteDiagnostic = "Not ready: no navigator (navEnabled=\(navEnabled), termsAccepted=\(termsOK), status=\(status))"
+        guard let mapView else {
+            lastRouteDiagnostic = "Map not ready yet."
             onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
-                                             routeFailed: "Google navigation is not ready. \(status.summary)"))
+                                             routeFailed: "Google Maps isn't ready. \(status.summary)"))
             return
         }
-        lastRouteDiagnostic = "Requesting route… (\(stops.count) stop(s), navEnabled=\(navEnabled), termsAccepted=\(termsOK))"
+        guard let origin = mapView.myLocation?.coordinate else {
+            lastRouteDiagnostic = "Waiting for your location (GPS)…"
+            onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
+                                             routeFailed: "Waiting for your location. Make sure location access is on and GPS has a fix, then try again."))
+            return
+        }
+        guard let last = stops.last else { return }
         appliedStops = stops
-        let waypoints = stops.compactMap { stop -> GMSNavigationWaypoint? in
-            if let placeID = stop.placeID {
-                return GMSNavigationWaypoint(placeID: placeID, title: stop.name)
-            }
-            return GMSNavigationWaypoint(location: stop.coordinate, title: stop.name)
+        lastRouteDiagnostic = "Requesting route via Routes API… (\(stops.count) stop(s))"
+        let destination = RoutesAPIClient.Waypoint(coordinate: last.coordinate, placeID: last.placeID)
+        let intermediates = stops.dropLast().map {
+            RoutesAPIClient.Waypoint(coordinate: $0.coordinate, placeID: $0.placeID)
         }
-        guard !waypoints.isEmpty else { return }
-        let options = GMSNavigationRoutingOptions(alternateRoutesStrategy: .all)
-        navigator.setDestinations(waypoints, routingOptions: options) { [weak self] routeStatus in
+        Task { [weak self] in
             guard let self else { return }
-            self.lastRouteDiagnostic = "Route status \(routeStatus.rawValue) (\(Self.routeStatusName(routeStatus)))"
-            switch routeStatus {
-            case .OK:
-                if self.mapView?.navigator?.isGuidanceActive != true {
-                    self.mapView?.cameraMode = .overview
-                }
-                self.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false, routeFailed: nil, routeReady: true))
-            case .canceled:
-                // Not a failure: a newer route request replaced this one (e.g.
-                // the user changed the stops, or guidance started while the
-                // preview was still calculating). The newer request's
-                // completion reports the real result, so stay silent here.
-                break
-            default:
-                self.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
-                                                      routeFailed: Self.routeFailureMessage(routeStatus)))
+            do {
+                let result = try await self.computeWithFallback(origin: origin, destination: destination,
+                                                                intermediates: Array(intermediates))
+                self.applyRoute(result)
+            } catch {
+                self.applyRouteFailure(error)
             }
         }
     }
 
-    /// Short name for a route status, for the on-screen diagnostic.
-    static func routeStatusName(_ status: GMSRouteStatus) -> String {
-        switch status {
-        case .OK: return "OK"
-        case .noRouteFound: return "noRouteFound"
-        case .networkError: return "networkError"
-        case .quotaExceeded: return "quotaExceeded"
-        case .apiKeyNotAuthorized: return "apiKeyNotAuthorized — key not enabled for Navigation SDK"
-        case .canceled: return "canceled"
-        case .duplicateWaypointsError: return "duplicateWaypointsError"
-        case .noWaypointsError: return "noWaypointsError"
-        case .locationUnavailable: return "locationUnavailable"
-        case .waypointError: return "waypointError"
-        case .travelModeUnsupported: return "travelModeUnsupported"
-        case .internalError: return "internalError"
-        @unknown default: return "unknown(\(status.rawValue))"
+    /// Prefer a two-wheeler route (apt for the motorcycle, and offered in Royal
+    /// Enfield's core markets); fall back to driving where two-wheeler routing
+    /// isn't available. An auth error (403) is not retried.
+    private func computeWithFallback(origin: CLLocationCoordinate2D,
+                                     destination: RoutesAPIClient.Waypoint,
+                                     intermediates: [RoutesAPIClient.Waypoint]) async throws -> RouteResult {
+        do {
+            return try await routes.compute(origin: origin, destination: destination,
+                                            intermediates: intermediates, mode: .twoWheeler)
+        } catch RoutesAPIError.noRoute {
+            return try await routes.compute(origin: origin, destination: destination,
+                                            intermediates: intermediates, mode: .drive)
+        } catch let RoutesAPIError.http(code, _) where code == 400 {
+            return try await routes.compute(origin: origin, destination: destination,
+                                            intermediates: intermediates, mode: .drive)
         }
     }
 
-    /// Plain-language explanation for a failed route request, for the
-    /// non-technical rider. The raw status is appended so support can map it
-    /// back to Google's `GMSRouteStatus` if needed.
-    static func routeFailureMessage(_ status: GMSRouteStatus) -> String {
-        switch status {
-        case .noRouteFound:
-            return "No route could be found to that destination. Try a nearby address or a different stop."
-        case .networkError:
-            return "Couldn't reach Google to calculate the route. Check your internet connection and try again."
-        case .quotaExceeded:
-            return "The daily Google Maps usage limit has been reached. Try again later."
-        case .apiKeyNotAuthorized:
-            return "The Google Maps key isn't authorized for navigation yet. The Navigation SDK must be enabled for this key."
-        case .duplicateWaypointsError, .noWaypointsError, .waypointError:
-            return "There was a problem with one of the stops. Remove it and add the destination again."
-        case .locationUnavailable:
-            return "Your location isn't available yet. Allow location access and wait for GPS, then try again."
-        case .travelModeUnsupported:
-            return "That travel mode isn't supported for this route."
-        default:
-            return "Google could not calculate a route (status \(status.rawValue))."
-        }
+    private func applyRoute(_ result: RouteResult) {
+        lastRouteInfo = result
+        drawRoute(result.encodedPolyline)
+        let km = result.distanceMeters / 1000
+        let minutes = Int((result.durationSeconds / 60).rounded())
+        lastRouteDiagnostic = String(format: "Route OK — %.1f km, ~%d min (Routes API)", km, minutes)
+        onUpdate?(GoogleNavigationUpdate(remainingMeters: result.distanceMeters,
+                                         remainingSeconds: result.durationSeconds,
+                                         isRerouting: false, arrived: false, routeReady: true))
+    }
+
+    private func applyRouteFailure(_ error: Error) {
+        let friendly = (error as? RoutesAPIError)?.errorDescription
+            ?? "Couldn't get a route: \(error.localizedDescription)"
+        lastRouteDiagnostic = "Route failed — \(friendly)"
+        onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false, routeFailed: friendly))
+    }
+
+    /// Draws the route line on the map and frames it. Replaces any existing line.
+    private func drawRoute(_ encoded: String) {
+        clearRoute()
+        guard let mapView, let path = GMSPath(fromEncodedPath: encoded) else { return }
+        let line = GMSPolyline(path: path)
+        line.strokeWidth = 7
+        line.strokeColor = UIColor.systemBlue
+        line.zIndex = 5
+        line.map = mapView
+        routePolylines = [line]
+        mapView.cameraMode = .free
+        let bounds = GMSCoordinateBounds(path: path)
+        mapView.animate(with: GMSCameraUpdate.fit(bounds, withPadding: 56))
+    }
+
+    private func clearRoute() {
+        routePolylines.forEach { $0.map = nil }
+        routePolylines = []
     }
 
     func startGuidance() {
-        guard let mapView, let navigator = mapView.navigator else { return }
-        navigator.isGuidanceActive = true
-        mapView.cameraMode = .following
+        // The route line stays drawn; follow the rider. Live turn-by-turn
+        // (step advancement, voice, rerouting) is built on the Routes API
+        // steps in a follow-up — the Navigation SDK's guidance isn't used.
+        mapView?.cameraMode = .following
     }
 
     func stopGuidance() {
-        guard let navigator = mapView?.navigator else { return }
-        navigator.isGuidanceActive = false
-        navigator.clearDestinations()
+        clearRoute()
+        lastRouteInfo = nil
+        lastRouteDiagnostic = nil
         appliedStops = []
         mapView?.cameraMode = .following
     }
