@@ -81,6 +81,11 @@ final class GoogleNavigationController: NSObject, ObservableObject {
     @Published var lighting: MapLighting = .auto { didSet { applyLighting() } }
     @Published var showsTraffic = true { didSet { mapView?.isTrafficEnabled = showsTraffic } }
 
+    /// Last routing outcome in plain words (for the on-screen diagnostic).
+    /// Records every outcome, including the ones not surfaced as errors, so the
+    /// exact Google route status is visible while we confirm routing behaviour.
+    @Published private(set) var lastRouteDiagnostic: String?
+
     /// Receives navigator updates (set by NavigationManager).
     var onUpdate: ((GoogleNavigationUpdate) -> Void)?
 
@@ -168,11 +173,15 @@ final class GoogleNavigationController: NSObject, ObservableObject {
 
     /// Requests routes (with alternatives) through all stops and shows them on the map.
     func previewRoute(stops: [Destination]) {
+        let termsOK = GMSNavigationServices.areTermsAndConditionsAccepted()
+        let navEnabled = mapView?.isNavigationEnabled ?? false
         guard let navigator = mapView?.navigator else {
+            lastRouteDiagnostic = "Not ready: no navigator (navEnabled=\(navEnabled), termsAccepted=\(termsOK), status=\(status))"
             onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
                                              routeFailed: "Google navigation is not ready. \(status.summary)"))
             return
         }
+        lastRouteDiagnostic = "Requesting route… (\(stops.count) stop(s), navEnabled=\(navEnabled), termsAccepted=\(termsOK))"
         appliedStops = stops
         let waypoints = stops.compactMap { stop -> GMSNavigationWaypoint? in
             if let placeID = stop.placeID {
@@ -184,6 +193,7 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         let options = GMSNavigationRoutingOptions(alternateRoutesStrategy: .all)
         navigator.setDestinations(waypoints, routingOptions: options) { [weak self] routeStatus in
             guard let self else { return }
+            self.lastRouteDiagnostic = "Route status \(routeStatus.rawValue) (\(Self.routeStatusName(routeStatus)))"
             switch routeStatus {
             case .OK:
                 if self.mapView?.navigator?.isGuidanceActive != true {
@@ -200,6 +210,25 @@ final class GoogleNavigationController: NSObject, ObservableObject {
                 self.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
                                                       routeFailed: Self.routeFailureMessage(routeStatus)))
             }
+        }
+    }
+
+    /// Short name for a route status, for the on-screen diagnostic.
+    static func routeStatusName(_ status: GMSRouteStatus) -> String {
+        switch status {
+        case .OK: return "OK"
+        case .noRouteFound: return "noRouteFound"
+        case .networkError: return "networkError"
+        case .quotaExceeded: return "quotaExceeded"
+        case .apiKeyNotAuthorized: return "apiKeyNotAuthorized — key not enabled for Navigation SDK"
+        case .canceled: return "canceled"
+        case .duplicateWaypointsError: return "duplicateWaypointsError"
+        case .noWaypointsError: return "noWaypointsError"
+        case .locationUnavailable: return "locationUnavailable"
+        case .waypointError: return "waypointError"
+        case .travelModeUnsupported: return "travelModeUnsupported"
+        case .internalError: return "internalError"
+        @unknown default: return "unknown(\(status.rawValue))"
         }
     }
 

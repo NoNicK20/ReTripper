@@ -107,6 +107,16 @@ private struct RideModeContent: View {
 
                     VStack(spacing: 8) {
                         if panel == .map {
+                            if let diag = google.lastRouteDiagnostic {
+                                Text(diag)
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(Theme.textPrimary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 10).padding(.vertical, 6)
+                                    .frame(maxWidth: .infinity)
+                                    .background(Color.black.opacity(0.85))
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.smallCornerRadius, style: .continuous))
+                            }
                             HStack(alignment: .bottom) {
                                 RouteSummaryStrip(navigation: navigation, tripMeter: tripMeter, unit: unit)
                                 mapButtons
