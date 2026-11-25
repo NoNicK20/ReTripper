@@ -74,6 +74,38 @@ final class DashLink: ObservableObject {
         lastMessage = "Disconnected from the dashboard."
     }
 
+    // MARK: - Navigation projection control (drives the dash video surface)
+
+    /// Enter nav-projection mode: a route-card burst (the dash gates its
+    /// video surface on it), then START_NAV, NAV_CTX and EMPTY_LISTS.
+    func sendNavKick(title: String, maneuverPlaceholders: Bool = false) async {
+        guard let socket else { return }
+        for _ in 0..<4 {
+            try? await socket.send(K1GPacket.makeRouteCard(title: title, projectionOn: false,
+                                                           seq: seq.consume(),
+                                                           includeManeuverPlaceholders: maneuverPlaceholders))
+            try? await Task.sleep(nanoseconds: 350_000_000)
+        }
+        try? await socket.send(K1GPacket.makeStartNav(seq: seq.consume()))
+        try? await socket.send(K1GPacket.makeNavContext(seq: seq.consume()))
+        try? await socket.send(K1GPacket.makeEmptyLists(seq: seq.consume()))
+    }
+
+    func sendProjectionOn() async {
+        try? await socket?.send(K1GPacket.makeProjectionOn(seq: seq.consume()))
+    }
+
+    /// Signal that a new map bitmap was streamed (once per H.264 frame).
+    func sendProjectionFrame() async {
+        try? await socket?.send(K1GPacket.makeProjectionFrame(seq: seq.consume()))
+    }
+
+    func stopProjection() async {
+        guard let socket else { return }
+        try? await socket.send(K1GPacket.makeProjectionStop(seq: seq.consume()))
+        try? await socket.send(K1GPacket.makeProjectionOff(seq: seq.consume()))
+    }
+
     // MARK: - Connect flow (with boot-race retries)
 
     private func runConnect(ssid: String) async {
