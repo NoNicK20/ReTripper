@@ -5,9 +5,9 @@
 //  Modular music control.
 //  - Apple Music: MediaPlayer's system music player (public API). It controls and
 //    reports only what the Music app is playing — not other apps.
-//  - Spotify: integration boundary only. Spotify's iOS SDK (App Remote) needs a
-//    registered client ID, redirect URI and the SpotifyiOS package, none of which
-//    are configured, so the provider reports itself unavailable.
+//  - Spotify: Spotify's official App Remote SDK (see SpotifyMusicProvider.swift).
+//    Shows the current track and does play/pause/next/previous once the rider
+//    links their Spotify account.
 //
 
 import Foundation
@@ -146,29 +146,8 @@ final class AppleMusicProvider: MusicProvider {
     }
 }
 
-// MARK: - Spotify boundary
-
-/// Placeholder for Spotify App Remote integration. Reports why it is unavailable
-/// instead of pretending to control Spotify.
-@MainActor
-final class SpotifyMusicProvider: MusicProvider {
-    let kind: MusicProviderKind = .spotify
-    var onChange: (() -> Void)?
-    let nowPlaying: NowPlaying? = nil
-    let playbackState: PlaybackState = .unknown
-
-    var availability: MusicAvailability {
-        if AppSecretsConfiguration.spotifyClientID == nil {
-            return .notConfigured("Spotify needs a Spotify developer client ID and the Spotify iOS SDK. Neither is configured in this build.")
-        }
-        return .notConfigured("A Spotify client ID is set, but the Spotify iOS SDK is not linked in this build.")
-    }
-
-    func requestAuthorization() async {}
-    func togglePlayPause() {}
-    func next() {}
-    func previous() {}
-}
+// Spotify is provided by SpotifyMusicProvider (see SpotifyMusicProvider.swift),
+// which uses Spotify's official App Remote SDK.
 
 // MARK: - Manager
 
@@ -211,6 +190,26 @@ final class MusicManager: ObservableObject {
     func togglePlayPause() { current?.togglePlayPause() }
     func next() { current?.next() }
     func previous() { current?.previous() }
+
+    // MARK: - Spotify link lifecycle (forwarded from the app entry point)
+
+    private var spotify: SpotifyMusicProvider? { providers[.spotify] as? SpotifyMusicProvider }
+
+    /// The Spotify authorization redirect, registered on the Spotify dashboard
+    /// and sharing the app's existing `retripper` URL scheme.
+    static func isSpotifyCallback(_ url: URL) -> Bool {
+        url.scheme == "retripper" && url.host == "spotify-callback"
+    }
+
+    /// True when the URL was the Spotify authorization redirect and was handled.
+    func handleSpotifyCallback(_ url: URL) -> Bool {
+        guard MusicManager.isSpotifyCallback(url) else { return false }
+        spotify?.handleAuthCallback(url)
+        return true
+    }
+
+    func appBecameActive() { spotify?.onBecomeActive() }
+    func appResignedActive() { spotify?.onResignActive() }
 
     private func sync() {
         guard let p = current else { return }

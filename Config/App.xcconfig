@@ -5,6 +5,11 @@
 // Without a key the app builds, but shows "Google Maps is not configured" instead of a map.
 
 GOOGLE_MAPS_API_KEY =
-SPOTIFY_CLIENT_ID =
+
+// Spotify Client ID is a PUBLIC app identifier (it ships inside every Spotify
+// app build and is safe to commit — it is NOT a secret, unlike a client secret
+// or the Google Maps key above). Paired with the redirect URI
+// retripper://spotify-callback registered on the Spotify developer dashboard.
+SPOTIFY_CLIENT_ID = dabfe8cd488a4622979b5fa5165a1465
 
 #include? "Secrets.xcconfig"

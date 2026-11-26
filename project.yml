@@ -17,6 +17,9 @@ packages:
   GooglePlaces:
     url: https://github.com/googlemaps/ios-places-sdk
     from: 11.0.0
+  SpotifyiOS:
+    url: https://github.com/spotify/ios-sdk
+    from: 5.0.1
 
 targets:
   ReTripper:
@@ -30,6 +33,8 @@ targets:
         product: GoogleNavigation
       - package: GooglePlaces
         product: GooglePlaces
+      - package: SpotifyiOS
+        product: SpotifyiOS
     configFiles:
       Debug: Config/App.xcconfig
       Release: Config/App.xcconfig
@@ -56,6 +61,10 @@ targets:
           - CFBundleURLName: com.nonick20.retripper.destination
             CFBundleURLSchemes:
               - retripper
+        # Lets the app open and hand off to the Spotify app for the App Remote
+        # connection (track info + skip from the control stick).
+        LSApplicationQueriesSchemes:
+          - spotify
         NSCameraUsageDescription: "ReTripper uses the camera only to read the Wi-Fi network name shown on your motorcycle's Tripper Dash."
         NSLocationWhenInUseUsageDescription: "ReTripper uses your location to record ride distance and time, show your position on the map, give turn-by-turn directions and show your compass course."
         NSLocationAlwaysAndWhenInUseUsageDescription: "ReTripper keeps recording your ride and guiding you while the screen is locked. Location is never shared or uploaded by ReTripper."

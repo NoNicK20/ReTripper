@@ -29,6 +29,8 @@ struct ReTripperApp: App {
                 .environmentObject(rideSession)
                 .environmentObject(appEnv)
                 .onOpenURL { url in
+                    // Spotify returns here after authorization: retripper://spotify-callback?...
+                    if rideSession.music.handleSpotifyCallback(url) { return }
                     // Destinations shared into ReTripper, e.g. retripper://navigate?lat=..&lon=..&name=..
                     if let destination = DestinationLinkParser.parse(url.absoluteString) {
                         rideSession.navigation.setDestination(destination)
@@ -37,7 +39,12 @@ struct ReTripperApp: App {
                 }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { rideSession.appWillResignActive() }
+            if phase == .active {
+                rideSession.music.appBecameActive()
+            } else {
+                rideSession.appWillResignActive()
+                rideSession.music.appResignedActive()
+            }
         }
     }
 }

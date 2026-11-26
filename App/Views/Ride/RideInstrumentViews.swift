@@ -406,7 +406,7 @@ struct AudioGuidanceSheet: View {
                                 ForEach(MusicProviderKind.allCases) { Text($0.rawValue).tag($0) }
                             }
                             .pickerStyle(.segmented)
-                            Text("Apple Music controls the Music app only. Other apps cannot be controlled by ReTripper.")
+                            Text("Apple Music controls the Music app. Spotify connects through Spotify's own app — pick it, then tap Allow Spotify access on the Ride music card to link your account.")
                                 .font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                         }
                         .darkCard(padding: 14)

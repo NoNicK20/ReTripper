@@ -187,7 +187,7 @@ struct RideSettingsSection: View {
             Text(google.status.summary)
                 .font(.system(size: 11))
                 .foregroundColor(Theme.textTertiary)
-            SettingsRow(title: "Spotify", value: "Not configured")
+            SettingsRow(title: "Spotify", value: AppSecretsConfiguration.spotifyClientID != nil ? "Link in Ride ➔ Audio" : "Not configured")
             SettingsRow(title: "Weather advisories", value: "No provider")
             SettingsRow(title: "Vehicle telemetry", value: "Unavailable")
         }
