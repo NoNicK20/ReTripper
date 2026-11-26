@@ -115,9 +115,13 @@ final class FakeMusicProvider: MusicProvider {
 
 @MainActor
 final class MusicAndAudioTests: XCTestCase {
-    func testSpotifyReportsNotConfigured() {
+    func testSpotifyStartsUnlinkedAndNotAvailable() {
         let spotify = SpotifyMusicProvider()
-        if case .notConfigured = spotify.availability {} else { XCTFail("Spotify must not claim availability") }
+        // Before the rider links their Spotify account the provider must not
+        // claim to be controlling Spotify, and has nothing playing. (It reports
+        // .needsAuthorization when the SDK + client ID are present, or
+        // .notConfigured otherwise — both are not "available".)
+        XCTAssertFalse(spotify.availability.isAvailable)
         XCTAssertNil(spotify.nowPlaying)
     }
 
