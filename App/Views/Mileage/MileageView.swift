@@ -16,9 +16,10 @@ struct MileageView: View {
     @State private var editingFill: FuelLog?
 
     // Import / export / backup
-    @State private var showCSVImporter = false
+    enum ImportKind { case csv, backup }
+    @State private var importKind: ImportKind = .csv
+    @State private var showImporter = false
     @State private var showCSVExporter = false
-    @State private var showBackupImporter = false
     @State private var showBackupExporter = false
     @State private var csvExportText = ""
     @State private var backupData = Data()
@@ -130,10 +131,15 @@ struct MileageView: View {
             .sheet(item: $editingFill) { fill in
                 MileageEntrySheet(editing: fill)
             }
-            .fileImporter(isPresented: $showCSVImporter,
-                          allowedContentTypes: [.commaSeparatedText, .plainText, .text],
+            .fileImporter(isPresented: $showImporter,
+                          allowedContentTypes: importKind == .csv
+                            ? [.commaSeparatedText, .plainText, .text, .data]
+                            : [.json, .text, .data],
                           allowsMultipleSelection: false) { result in
-                handleCSVImport(result)
+                switch importKind {
+                case .csv: handleCSVImport(result)
+                case .backup: handleBackupPick(result)
+                }
             }
             .fileExporter(isPresented: $showCSVExporter,
                           document: MileageCSVDocument(text: csvExportText),
@@ -143,11 +149,6 @@ struct MileageView: View {
                           document: BackupDocument(data: backupData),
                           contentType: .json,
                           defaultFilename: backupFilename) { _ in }
-            .fileImporter(isPresented: $showBackupImporter,
-                          allowedContentTypes: [.json],
-                          allowsMultipleSelection: false) { result in
-                handleBackupPick(result)
-            }
             .alert("Restore backup?", isPresented: Binding(get: { pendingRestore != nil },
                                                            set: { if !$0 { pendingRestore = nil } })) {
                 Button("Cancel", role: .cancel) { pendingRestore = nil }
@@ -243,7 +244,7 @@ struct MileageView: View {
     private var dataMenu: some View {
         Menu {
             Section("Mileage (CSV)") {
-                Button { showCSVImporter = true } label: { Label("Import from CSV", systemImage: "square.and.arrow.down") }
+                Button { importKind = .csv; showImporter = true } label: { Label("Import from CSV", systemImage: "square.and.arrow.down") }
                 Button {
                     csvExportText = dataManager.fuelLogsCSV()
                     showCSVExporter = true
@@ -255,7 +256,7 @@ struct MileageView: View {
                     backupData = dataManager.backupData() ?? Data()
                     showBackupExporter = true
                 } label: { Label("Save backup file", systemImage: "externaldrive.badge.plus") }
-                Button(role: .destructive) { showBackupImporter = true } label: {
+                Button(role: .destructive) { importKind = .backup; showImporter = true } label: {
                     Label("Restore from backup", systemImage: "arrow.counterclockwise")
                 }
             }

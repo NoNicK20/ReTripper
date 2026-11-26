@@ -252,6 +252,23 @@ struct NowPlayingCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
+                Menu {
+                    ForEach(MusicProviderKind.allCases) { kind in
+                        Button { music.select(kind) } label: {
+                            Label(kind.rawValue, systemImage: music.selectedKind == kind ? "checkmark" : "music.note")
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(music.selectedKind.rawValue.uppercased())
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7, weight: .bold))
+                    }
+                    .foregroundColor(Theme.textTertiary)
+                }
+                .accessibilityLabel("Music source: \(music.selectedKind.rawValue)")
+
                 switch music.availability {
                 case .available:
                     Text(music.nowPlaying?.title ?? "Nothing playing in \(music.selectedKind.rawValue)")
