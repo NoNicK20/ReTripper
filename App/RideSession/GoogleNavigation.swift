@@ -258,6 +258,9 @@ final class GoogleNavigationController: NSObject, ObservableObject {
     private func applyRoute(_ result: RouteResult) {
         lastRouteInfo = result
         drawRoute(result.encodedPolyline, frame: !guiding)
+        // Share the route geometry with the dash map renderer so it draws the
+        // same line on the bike's screen.
+        DashRouteStore.shared.setRoute(EncodedPolyline.decode(result.encodedPolyline))
         if guiding { tracker = RouteTracker(route: result) }
         let km = result.distanceMeters / 1000
         let minutes = Int((result.durationSeconds / 60).rounded())
@@ -316,6 +319,7 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         guidanceLocation.stopUpdatingLocation()
         tracker = nil
         clearRoute()
+        DashRouteStore.shared.clear()
         lastRouteInfo = nil
         lastRouteDiagnostic = nil
         appliedStops = []
@@ -343,9 +347,12 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         guard let tracker else { return }
         let snap = tracker.snapshot(for: coord)
         if snap.arrived {
+            DashRouteStore.shared.clear()
             onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: true))
             return
         }
+        // Feed the next turn to the dash map's turn banner.
+        DashRouteStore.shared.setManeuver(snap.maneuver, distance: snap.distanceToManeuver)
         if snap.lateralOffset > Self.offRouteMeters {
             offRouteStreak += 1
             if offRouteStreak >= 3 && !rerouting { reroute(from: coord) }

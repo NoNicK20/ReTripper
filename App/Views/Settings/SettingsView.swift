@@ -165,6 +165,9 @@ struct SettingsRow: View {
 struct RideSettingsSection: View {
     @ObservedObject var alerts: ContextualAlertManager
     @ObservedObject var google: GoogleNavigationController
+    /// Dash map orientation: heading-up (rotates to travel direction) vs
+    /// north-up (fixed, readable street names). Default north-up.
+    @AppStorage(DashMapDefaults.headingUpKey) private var dashHeadingUp = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -172,6 +175,20 @@ struct RideSettingsSection: View {
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundColor(Theme.textTertiary)
                 .tracking(1.2)
+
+            Toggle(isOn: $dashHeadingUp) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dash map heading-up")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Theme.textPrimary)
+                    Text(dashHeadingUp
+                         ? "Map turns to your direction. Street names rotate with it."
+                         : "North stays up. Street names stay upright and readable.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+            }
+            .tint(Theme.apexRed)
 
             Stepper(value: $alerts.serviceIntervalKm, in: 1000...20000, step: 500) {
                 SettingsRow(title: "Service reminder every", value: String(format: "%.0f km", alerts.serviceIntervalKm))

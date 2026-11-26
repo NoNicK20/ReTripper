@@ -3,10 +3,13 @@
 //  ReTripper
 //
 //  The real dash map: renders 526×300 frames from Google Map Tiles centred
-//  on the rider, north-up, with a heading chevron, and feeds them to the
-//  H.264 streamer. Tiles are fetched and cached asynchronously; each 4 fps
-//  frame draws from whatever tiles are in hand.
+//  on the rider, with a heading chevron and — when the rider is navigating —
+//  the active route line and a next-turn banner, then feeds them to the
+//  H.264 streamer. Tiles are fetched and cached asynchronously; the rider's
+//  position and heading are smoothed between GPS fixes so the map glides
+//  instead of jumping.
 //
+//  North-up or heading-up follows the rider's setting (DashMapDefaults).
 //  With no Google Maps key (or Map Tiles API not enabled) it renders a
 //  "map not configured" frame instead of any other provider's map.
 //
@@ -23,10 +26,14 @@ import Foundation
 final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelegate {
 
     let frameSize = CGSize(width: 526, height: 300)
-    let targetFps = 4
+    /// Higher than the tile-refresh rate: tiles update ~1 Hz but the frame is
+    /// re-rendered from the smoothed position every tick so panning is fluid.
+    let targetFps = 15
     var zoom = 16
-    /// Heading-up (map rotates so travel direction is up). false = north-up.
-    var headingUp = true
+
+    /// How far the smoothed position/heading moves toward the latest GPS fix
+    /// each frame (0–1). Small = smoother but laggier.
+    private let smoothing = 0.2
 
     /// World-pixel radius that must be covered so the rotated 526×300 frame
     /// never shows a corner gap, plus a tile of margin.
@@ -40,8 +47,13 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
     private var onFrame: ((CVPixelBuffer, CMTime) -> Void)?
     private var frameIndex: Int64 = 0
 
-    private var coordinate: CLLocationCoordinate2D?
-    private var headingDegrees: Double = 0
+    /// Latest GPS fix / heading (the target the render values ease toward).
+    private var targetCoordinate: CLLocationCoordinate2D?
+    private var targetHeading: Double = 0
+    /// Smoothed values actually drawn, advanced toward the targets each tick.
+    private var renderCoordinate: CLLocationCoordinate2D?
+    private var renderHeading: Double = 0
+
     private var tileMirror: [GoogleTileFetcher.TileKey: CGImage] = [:]
     private var refreshing = false
     /// Plain-language reason the map tiles aren't loading (from the fetcher),
@@ -49,6 +61,7 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
     private var tileDiagnostic: String?
 
     private let apexRed = CGColor(red: 0.86, green: 0.08, blue: 0.09, alpha: 1)
+    private let routeBlue = CGColor(red: 0.13, green: 0.50, blue: 0.96, alpha: 1)
 
     init(fetcher: GoogleTileFetcher = GoogleTileFetcher()) {
         self.fetcher = fetcher
@@ -81,24 +94,43 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let loc = locations.last else { return }
-        coordinate = loc.coordinate
-        if loc.course >= 0 && loc.speed > 2 { headingDegrees = loc.course }
+        targetCoordinate = loc.coordinate
+        if loc.course >= 0 && loc.speed > 2 { targetHeading = loc.course }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
         let h = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
-        if h >= 0 { headingDegrees = h }
+        if h >= 0 { targetHeading = h }
     }
 
     // MARK: - Render loop
 
     private func tick() {
+        advanceSmoothing()
         renderFrame()
         kickTileRefresh()
     }
 
+    /// Ease the drawn position/heading toward the latest fix so motion glides.
+    private func advanceSmoothing() {
+        guard let target = targetCoordinate else { return }
+        if let r = renderCoordinate {
+            renderCoordinate = CLLocationCoordinate2D(
+                latitude: r.latitude + (target.latitude - r.latitude) * smoothing,
+                longitude: r.longitude + (target.longitude - r.longitude) * smoothing)
+        } else {
+            renderCoordinate = target   // snap on the first fix
+            renderHeading = targetHeading
+            return
+        }
+        var delta = (targetHeading - renderHeading).truncatingRemainder(dividingBy: 360)
+        if delta > 180 { delta -= 360 } else if delta < -180 { delta += 360 }
+        renderHeading = (renderHeading + delta * smoothing).truncatingRemainder(dividingBy: 360)
+        if renderHeading < 0 { renderHeading += 360 }
+    }
+
     private func kickTileRefresh() {
-        guard let coord = coordinate, !refreshing else { return }
+        guard let coord = targetCoordinate, !refreshing else { return }
         let keys = tileKeys(center: coord)
         refreshing = true
         let fetcher = self.fetcher
@@ -152,11 +184,13 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
         ctx.setFillColor(CGColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
 
-        guard let coord = coordinate else {
+        guard let coord = renderCoordinate else {
             drawCentreText("Waiting for GPS…", in: ctx, size: CGSize(width: w, height: h))
             emit(buffer)
             return
         }
+
+        let headingUp = DashMapDefaults.headingUp
 
         // Context is y-up; "up" (+y) is the top of the frame. The rider sits
         // at the frame centre. For heading-up, rotate the map CCW by the
@@ -172,7 +206,7 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
         ctx.saveGState()
         if headingUp {
             ctx.translateBy(x: Double(w) / 2, y: Double(h) / 2)
-            ctx.rotate(by: headingDegrees * .pi / 180.0)   // y-up CCW = heading-up
+            ctx.rotate(by: renderHeading * .pi / 180.0)   // y-up CCW = heading-up
             ctx.translateBy(x: -Double(w) / 2, y: -Double(h) / 2)
         }
         var anyTile = false
@@ -190,24 +224,77 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
                 ctx.restoreGState()
             }
         }
+        // Route line sits on the map, so it's drawn inside the same transform.
+        drawRouteLine(in: ctx, originX: originX, originY: originY, height: h)
         ctx.restoreGState()
 
         if !anyTile {
             drawCentreText(tileDiagnostic ?? "Loading map…",
                            in: ctx, size: CGSize(width: w, height: h))
         } else {
-            drawRiderMarker(in: ctx, center: CGPoint(x: Double(w) / 2, y: Double(h) / 2))
+            drawRiderMarker(in: ctx, center: CGPoint(x: Double(w) / 2, y: Double(h) / 2),
+                            headingUp: headingUp)
         }
+        // Turn banner is screen-space, always upright on top of everything.
+        drawManeuverBanner(in: ctx, width: w, height: h)
         emit(buffer)
     }
 
-    private func drawRiderMarker(in ctx: CGContext, center: CGPoint) {
+    /// Draws the active navigation route (if any) in the current map transform.
+    private func drawRouteLine(in ctx: CGContext, originX: Double, originY: Double, height h: Int) {
+        let coords = DashRouteStore.shared.snapshot.coords
+        guard coords.count >= 2 else { return }
+        let points = coords.map { coord -> CGPoint in
+            let wp = WebMercator.worldPixel(coord, zoom: zoom)
+            return CGPoint(x: wp.x - originX, y: Double(h) - (wp.y - originY))
+        }
+        ctx.setLineJoin(.round)
+        ctx.setLineCap(.round)
+        // White casing for contrast, then the blue route on top.
+        ctx.beginPath(); ctx.addLines(between: points)
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
+        ctx.setLineWidth(8); ctx.strokePath()
+        ctx.beginPath(); ctx.addLines(between: points)
+        ctx.setStrokeColor(routeBlue)
+        ctx.setLineWidth(5); ctx.strokePath()
+    }
+
+    /// Next-turn banner (arrow + distance) along the top, drawn upright.
+    private func drawManeuverBanner(in ctx: CGContext, width w: Int, height h: Int) {
+        let snap = DashRouteStore.shared.snapshot
+        guard snap.hasRoute, !snap.maneuver.isEmpty else { return }
+        let text = "\(Self.arrow(for: snap.maneuver))  \(Self.distanceText(snap.distanceToManeuver))"
+        let bannerH: CGFloat = 34
+        let rect = CGRect(x: 8, y: CGFloat(h) - bannerH - 8, width: CGFloat(w) - 16, height: bannerH)
+        let path = CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
+        ctx.addPath(path)
+        ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.62))
+        ctx.fillPath()
+        let line = makeLine(text, fontSize: 19)
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.textPosition = CGPoint(x: rect.minX + 14, y: rect.minY + 10)
+        CTLineDraw(line, ctx)
+    }
+
+    private static func arrow(for maneuver: String) -> String {
+        let m = maneuver.uppercased()
+        if m.contains("UTURN") { return "⟲" }
+        if m.contains("LEFT") { return "←" }
+        if m.contains("RIGHT") { return "→" }
+        return "↑"
+    }
+
+    private static func distanceText(_ metres: Double) -> String {
+        metres >= 1000 ? String(format: "%.1f km", metres / 1000) : String(format: "%.0f m", metres)
+    }
+
+    private func drawRiderMarker(in ctx: CGContext, center: CGPoint, headingUp: Bool) {
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
         // Heading-up: map is rotated, so the rider always points up (no
         // rotation). North-up: rotate the chevron to the heading (clockwise =
         // negative in a y-up context).
-        if !headingUp { ctx.rotate(by: -headingDegrees * .pi / 180.0) }
+        if !headingUp { ctx.rotate(by: -renderHeading * .pi / 180.0) }
         ctx.beginPath()
         ctx.move(to: CGPoint(x: 0, y: 16))              // apex points "up" (north when heading 0)
         ctx.addLine(to: CGPoint(x: -11, y: -12))

@@ -147,6 +147,9 @@ class DashboardConnectionManager: ObservableObject {
             isVerifyingSession = false
             state = .dashboardSessionEstablished(ssid: ssid)
             diagnosticMessage = dashLink.lastMessage ?? "Connected to the dashboard."
+            // Put the map on the dash as soon as it's connected — no need to
+            // press Start map. The rider can still stop/restart it manually.
+            if let projection, projection.state == .idle { projection.start() }
         case .failed(let message):
             isVerifyingSession = false
             // A dash-session failure doesn't drop the Wi-Fi association.
