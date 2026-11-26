@@ -13,9 +13,7 @@ struct HomeView: View {
     @EnvironmentObject private var connectionManager: DashboardConnectionManager
     @EnvironmentObject private var appEnv: AppEnvironment
 
-    @State private var showingFuelSheet = false
     @State private var showingServiceSheet = false
-    @State private var showingRideSheet = false
     @State private var showingConnectSheet = false
 
     var body: some View {
@@ -33,12 +31,6 @@ struct HomeView: View {
 
                         // Motorcycle Profile Card
                         MotorcycleCard(motorcycle: dataManager.motorcycle)
-
-                        // Odometer Digital Cluster
-                        OdometerDisplay(
-                            reading: dataManager.motorcycle.currentOdometer,
-                            unit: dataManager.distanceUnit
-                        )
 
                         // Connected Ride Cockpit Hero Launcher
                         Button(action: { appEnv.selectedTab = AppEnvironment.rideTab }) {
@@ -80,9 +72,8 @@ struct HomeView: View {
 
                         // Quick Actions Bar
                         QuickActionButtons(
-                            onFuelTap: { showingFuelSheet = true },
-                            onServiceTap: { showingServiceSheet = true },
-                            onRideTap: { showingRideSheet = true }
+                            onFuelTap: { appEnv.selectedTab = AppEnvironment.mileageTab },
+                            onServiceTap: { showingServiceSheet = true }
                         )
 
                         // Recent Activity Feed
@@ -97,14 +88,8 @@ struct HomeView: View {
             .sheet(isPresented: $showingConnectSheet) {
                 DashboardConnectSheet()
             }
-            .sheet(isPresented: $showingFuelSheet) {
-                AddFuelSheet()
-            }
             .sheet(isPresented: $showingServiceSheet) {
                 AddServiceSheet()
-            }
-            .sheet(isPresented: $showingRideSheet) {
-                AddRideSheet()
             }
         }
     }

@@ -37,6 +37,9 @@ final class RideSessionManager: ObservableObject {
     private var ticker: AnyCancellable?
     private var screenVisible = false
     private var lastReminderCheck: Date?
+    /// True while the current ride was started automatically by connecting to
+    /// the bike, so we only auto-end rides we auto-started (never a manual one).
+    private var rideWasAutoStarted = false
 
     init(location: LocationService = .shared,
          tripMeter: TripMeterManager = .shared,
@@ -168,6 +171,7 @@ final class RideSessionManager: ObservableObject {
     @discardableResult
     func endRide(dataManager: DataManager) -> RideLog? {
         guard rideState != .idle else { return nil }
+        rideWasAutoStarted = false
         let rideTitle = navigation.stops.last?.name ?? "Recorded ride"
         let result = tripMeter.finishRide()
         let metrics = result.metrics
@@ -219,6 +223,7 @@ final class RideSessionManager: ObservableObject {
         rideState = .idle
         rideStartedAt = nil
         recoveredFromInterruption = false
+        rideWasAutoStarted = false
         updateTickerNeed()
     }
 
@@ -334,11 +339,33 @@ final class RideSessionManager: ObservableObject {
     }
 
     private func handle(dashboardFrom old: DashboardConnectionState, to new: DashboardConnectionState) {
+        // Auto-record: connecting to the bike (dash Wi-Fi) starts a ride, and
+        // dropping that connection ends and saves it.
+        if !old.isAssociated && new.isAssociated {
+            autoStartRide()
+        } else if old.isAssociated && !new.isAssociated {
+            autoEndRide()
+        }
+
         guard rideState != .idle || navigation.status.isActive else { return }
         if old.isAssociated && !new.isAssociated {
             alerts.post(.dashboard, priority: .warning, title: "Tripper Wi-Fi disconnected",
                         message: "Phone-side ride features continue normally.", symbol: "wifi.slash", autoDismiss: 8)
         }
+    }
+
+    /// Begins recording automatically when the bike connects (phone GPS).
+    private func autoStartRide() {
+        guard rideState == .idle else { return }
+        rideWasAutoStarted = true
+        startRide()
+    }
+
+    /// Ends and saves a ride that was auto-started, when the bike disconnects.
+    /// A manually started ride is left running.
+    private func autoEndRide() {
+        guard rideWasAutoStarted, rideState != .idle else { return }
+        endRide(dataManager: DataManager.shared)
     }
 
     // MARK: Ticker

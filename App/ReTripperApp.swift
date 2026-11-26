@@ -47,6 +47,7 @@ struct ReTripperApp: App {
 class AppEnvironment: ObservableObject {
     static let shared = AppEnvironment()
     static let rideTab = 1
+    static let mileageTab = 2
 
     @Published var isLaunched = true
     @Published var selectedTab: Int = 0

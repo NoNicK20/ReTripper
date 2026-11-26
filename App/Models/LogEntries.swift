@@ -15,6 +15,8 @@ struct FuelLog: Identifiable, Codable, Equatable {
     var totalCost: Double
     var isFullTank: Bool = true
     var notes: String = ""
+    // Price per litre at the time of the fill. Optional so older saved logs still decode.
+    var pricePerLiter: Double? = nil
 }
 
 struct MaintenanceLog: Identifiable, Codable, Equatable {

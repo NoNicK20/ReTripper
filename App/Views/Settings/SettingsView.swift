@@ -10,6 +10,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var dataManager: DataManager
     @State private var showingResetAlert = false
+    @State private var showingEditMotorcycle = false
 
     var body: some View {
         NavigationStack {
@@ -32,6 +33,37 @@ struct SettingsView: View {
                             Spacer()
                         }
                         .padding(.top, 8)
+
+                        // Motorcycle profile (odometer is set here — the Tripper
+                        // Dash link can't read it from the bike).
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("MOTORCYCLE")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(Theme.textTertiary)
+                                .tracking(1.2)
+
+                            SettingsRow(title: "Bike", value: dataManager.motorcycle.displayName)
+                            SettingsRow(title: "Odometer",
+                                        value: String(format: "%.0f %@", dataManager.motorcycle.currentOdometer, dataManager.distanceUnit.shortLabel))
+
+                            Button(action: { showingEditMotorcycle = true }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "pencil")
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text("Edit Motorcycle Profile")
+                                        .font(.system(size: 14, weight: .bold))
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(Theme.textTertiary)
+                                }
+                                .foregroundColor(Theme.apexRed)
+                                .padding(12)
+                                .background(Theme.surfaceSecondary)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                        }
+                        .darkCard(padding: 16)
 
                         // Preferences: Distance Units
                         VStack(alignment: .leading, spacing: 14) {
@@ -139,6 +171,9 @@ struct SettingsView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .sheet(isPresented: $showingEditMotorcycle) {
+                EditMotorcycleSheet()
+            }
             .alert("Reset All Data?", isPresented: $showingResetAlert) {
                 Button("Cancel", role: .cancel) {}
                 Button("Reset", role: .destructive) {

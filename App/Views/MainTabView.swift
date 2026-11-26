@@ -47,25 +47,19 @@ struct MainTabView: View {
                 .tabItem {
                     Label("Ride", systemImage: "location.north.circle.fill")
                 }
-                .tag(1)
+                .tag(AppEnvironment.rideTab)
 
-            GarageView()
+            MileageView()
                 .tabItem {
-                    Label("Garage", systemImage: "motorcycle.fill")
+                    Label("Mileage", systemImage: "fuelpump.fill")
                 }
-                .tag(2)
-
-            RidesView()
-                .tabItem {
-                    Label("Rides", systemImage: "flag.checkered")
-                }
-                .tag(3)
+                .tag(AppEnvironment.mileageTab)
 
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
-                .tag(4)
+                .tag(3)
         }
         .tint(Theme.apexRed)
     }

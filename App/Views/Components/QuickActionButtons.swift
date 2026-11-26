@@ -10,7 +10,6 @@ import SwiftUI
 struct QuickActionButtons: View {
     let onFuelTap: () -> Void
     let onServiceTap: () -> Void
-    let onRideTap: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -21,8 +20,8 @@ struct QuickActionButtons: View {
 
             HStack(spacing: 12) {
                 QuickActionButton(
-                    title: "Fuel",
-                    subtitle: "Refill",
+                    title: "Mileage",
+                    subtitle: "Fuel log",
                     systemIcon: "fuelpump.fill",
                     isPrimary: true,
                     action: onFuelTap
@@ -34,14 +33,6 @@ struct QuickActionButtons: View {
                     systemIcon: "wrench.and.screwdriver.fill",
                     isPrimary: false,
                     action: onServiceTap
-                )
-
-                QuickActionButton(
-                    title: "Ride",
-                    subtitle: "Record",
-                    systemIcon: "flag.checkered",
-                    isPrimary: false,
-                    action: onRideTap
                 )
             }
         }
@@ -92,7 +83,7 @@ struct QuickActionButton: View {
 #Preview {
     ZStack {
         Theme.background.ignoresSafeArea()
-        QuickActionButtons(onFuelTap: {}, onServiceTap: {}, onRideTap: {})
+        QuickActionButtons(onFuelTap: {}, onServiceTap: {})
             .padding()
     }
 }
