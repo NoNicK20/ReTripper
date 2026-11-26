@@ -12,6 +12,7 @@ import SwiftUI
 struct MileageView: View {
     @EnvironmentObject private var dataManager: DataManager
     @State private var showingEntrySheet = false
+    @State private var editingFill: FuelLog?
 
     private let dateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -84,14 +85,21 @@ struct MileageView: View {
                                     .foregroundColor(Theme.textTertiary)
                                     .tracking(1.2)
 
+                                Text("Tap a fill to edit or delete it.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Theme.textTertiary)
+
                                 ForEach(dataManager.fuelLogs) { fill in
-                                    FuelFillCard(
-                                        fill: fill,
-                                        unit: unit,
-                                        economyUnit: economyUnit,
-                                        economy: intervalsByFill[fill.id]?.economy,
-                                        dateString: dateFormatter.string(from: fill.date)
-                                    )
+                                    Button { editingFill = fill } label: {
+                                        FuelFillCard(
+                                            fill: fill,
+                                            unit: unit,
+                                            economyUnit: economyUnit,
+                                            economy: intervalsByFill[fill.id]?.economy,
+                                            dateString: dateFormatter.string(from: fill.date)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }
@@ -103,6 +111,9 @@ struct MileageView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingEntrySheet) {
                 MileageEntrySheet()
+            }
+            .sheet(item: $editingFill) { fill in
+                MileageEntrySheet(editing: fill)
             }
         }
     }

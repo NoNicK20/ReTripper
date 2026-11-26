@@ -391,6 +391,17 @@ final class GoogleNavigationController: NSObject, ObservableObject {
         mapView?.cameraMode = .following
     }
 
+    /// Step the map zoom (driven by the bike's control stick when the map is
+    /// shown on the dash). Clamped to a sensible range.
+    func zoomIn() { stepZoom(by: 1) }
+    func zoomOut() { stepZoom(by: -1) }
+
+    private func stepZoom(by delta: Float) {
+        guard let mapView else { return }
+        let target = max(3, min(20, mapView.camera.zoom + delta))
+        mapView.animate(toZoom: target)
+    }
+
     /// Maps ReTripper's guidance mode onto Google's own voice guidance.
     func setVoice(_ mode: GuidanceMode, callActive: Bool) {
         guard let navigator = mapView?.navigator else { return }

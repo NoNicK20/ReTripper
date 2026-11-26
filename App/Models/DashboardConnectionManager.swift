@@ -103,6 +103,9 @@ class DashboardConnectionManager: ObservableObject {
     /// This is Wi-Fi association only — it does NOT mean an authenticated dashboard session.
     var isConnected: Bool { state.isAssociated }
 
+    /// Control-stick / dash-button presses from the bike (right/left/down/click).
+    var buttonEvents: AnyPublisher<DashButton, Never> { dashLink.buttonEvents.eraseToAnyPublisher() }
+
     private let userDefaultsKey = "retripper_last_known_ssid"
 
     init() {

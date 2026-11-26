@@ -13,6 +13,9 @@ struct MileageEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var dataManager: DataManager
 
+    /// When set, the sheet edits this existing fill instead of adding a new one.
+    var editing: FuelLog? = nil
+
     @State private var odometerString: String = ""
     @State private var priceString: String = ""      // price per litre
     @State private var litersString: String = ""
@@ -126,7 +129,7 @@ struct MileageEntrySheet: View {
                         .darkCard(padding: 16)
 
                         Button(action: save) {
-                            Text("Save Fill")
+                            Text(editing == nil ? "Save Fill" : "Save Changes")
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundColor(Theme.textPrimary)
                                 .frame(maxWidth: .infinity)
@@ -137,11 +140,27 @@ struct MileageEntrySheet: View {
                         .disabled(isSaveDisabled)
                         .opacity(isSaveDisabled ? 0.45 : 1.0)
                         .padding(.top, 8)
+
+                        if editing != nil {
+                            Button(role: .destructive, action: deleteFill) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 13, weight: .bold))
+                                    Text("Delete This Fill")
+                                        .font(.system(size: 15, weight: .bold))
+                                }
+                                .foregroundColor(Theme.apexRed)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Theme.surfaceSecondary)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+                            }
+                        }
                     }
                     .padding(16)
                 }
             }
-            .navigationTitle("Log Fuel Fill")
+            .navigationTitle(editing == nil ? "Log Fuel Fill" : "Edit Fuel Fill")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -161,11 +180,25 @@ struct MileageEntrySheet: View {
             }
             .onChange(of: priceString) { _, _ in syncDerived() }
         }
-        .onAppear {
+        .onAppear(perform: prefill)
+    }
+
+    private func prefill() {
+        guard let fill = editing else {
             if dataManager.motorcycle.currentOdometer > 0 {
                 odometerString = String(format: "%.0f", dataManager.motorcycle.currentOdometer)
             }
+            return
         }
+        odometerString = String(format: "%.0f", fill.odometer)
+        litersString = String(format: "%.2f", fill.liters)
+        costString = String(format: "%.2f", fill.totalCost)
+        if let price = fill.pricePerLiter, price > 0 {
+            priceString = String(format: "%.2f", price)
+        }
+        isFullTank = fill.isFullTank
+        notes = fill.notes
+        date = fill.date
     }
 
     /// Keep litres and total in step with the price, recomputing whichever the
@@ -189,16 +222,33 @@ struct MileageEntrySheet: View {
     private func save() {
         guard let liters = parsedLiters, liters > 0,
               let odo = parsedOdometer, let cost = parsedCost else { return }
-        let log = FuelLog(
-            date: date,
-            odometer: odo,
-            liters: liters,
-            totalCost: cost,
-            isFullTank: isFullTank,
-            notes: notes.trimmingCharacters(in: .whitespaces),
-            pricePerLiter: parsedPrice
-        )
-        dataManager.addFuelLog(log)
+        if let existing = editing {
+            var updated = existing
+            updated.date = date
+            updated.odometer = odo
+            updated.liters = liters
+            updated.totalCost = cost
+            updated.isFullTank = isFullTank
+            updated.notes = notes.trimmingCharacters(in: .whitespaces)
+            updated.pricePerLiter = parsedPrice
+            dataManager.updateFuelLog(updated)
+        } else {
+            let log = FuelLog(
+                date: date,
+                odometer: odo,
+                liters: liters,
+                totalCost: cost,
+                isFullTank: isFullTank,
+                notes: notes.trimmingCharacters(in: .whitespaces),
+                pricePerLiter: parsedPrice
+            )
+            dataManager.addFuelLog(log)
+        }
+        dismiss()
+    }
+
+    private func deleteFill() {
+        if let existing = editing { dataManager.deleteFuelLog(id: existing.id) }
         dismiss()
     }
 

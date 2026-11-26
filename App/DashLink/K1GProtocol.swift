@@ -78,6 +78,18 @@ enum K1G {
     static let burstPause: TimeInterval = 0.02
 }
 
+// MARK: - Bike control-stick buttons (dash → phone)
+
+/// The Royal Enfield left-grip control stick / dash button, delivered inbound
+/// as a `09 00 0001 XX` segment. Byte codes verified by the community
+/// better-dash project (OpenMotoDash/better-dash).
+enum DashButton: UInt8, Sendable, Equatable, CaseIterable {
+    case right = 0x13
+    case left  = 0x14
+    case down  = 0x15
+    case click = 0x18
+}
+
 // MARK: - Segment
 
 struct K1GSegment: Equatable, Sendable {
@@ -153,6 +165,13 @@ enum K1GPacket {
         encode(segments: [K1GSegment(type: .session,
                                      sub: K1G.SessionSub.requestPubkey.rawValue,
                                      payload: Data([0x01]))], seq: seq)
+    }
+
+    /// Echo-ack for a bike-button event: a `06 80 0001 XX` status segment
+    /// carrying the same button byte. The dash expects this acknowledgement for
+    /// every `09 00 0001 XX` it sends (source: better-dash).
+    static func makeButtonAck(buttonByte: UInt8, seq: UInt8) -> Data {
+        encode(segments: [K1GSegment(type: .status, sub: 0x80, payload: Data([buttonByte]))], seq: seq)
     }
 
     static func makeSessionKey(ciphertext: Data, seq: UInt8) -> Data {

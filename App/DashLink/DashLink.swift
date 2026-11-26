@@ -41,6 +41,10 @@ final class DashLink: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var lastMessage: String?
 
+    /// Control-stick / dash-button presses relayed from the bike while a
+    /// session is live (the dash sends `09 00 0001 XX`; we echo-ack and publish).
+    let buttonEvents = PassthroughSubject<DashButton, Never>()
+
     /// A generic hostname shown on the dash's pairing screen. Deliberately
     /// NOT the user's device name — that would leak personal information.
     var hostname = "ReTripper"
@@ -201,10 +205,28 @@ final class DashLink: ObservableObject {
     }
 
     private func appendSegments(_ segments: [K1GSegment]) {
+        for seg in segments where seg.type == K1G.SegType.button.rawValue {
+            handleButton(seg)
+        }
         received.append(contentsOf: segments)
         if let w = waiter, w.check(received) {
             waiter = nil
             w.resume(true)
+        }
+    }
+
+    /// A `09 … XX` control-stick press: echo-ack it (the dash requires this) and
+    /// publish the decoded button for the app to act on.
+    private func handleButton(_ seg: K1GSegment) {
+        guard let byte = seg.payload.first else { return }
+        if let socket {
+            let ack = K1GPacket.makeButtonAck(buttonByte: byte, seq: seq.consume())
+            Task { try? await socket.send(ack) }
+        }
+        if let button = DashButton(rawValue: byte) {
+            buttonEvents.send(button)
+        } else {
+            log.debug("Unknown dash button byte 0x\(String(byte, radix: 16))")
         }
     }
 

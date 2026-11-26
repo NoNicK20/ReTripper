@@ -41,6 +41,10 @@ final class RideSessionManager: ObservableObject {
     /// the bike, so we only auto-end rides we auto-started (never a manual one).
     private var rideWasAutoStarted = false
 
+    /// What the bike's control stick currently drives. Click toggles it.
+    enum DashStickMode { case map, music }
+    @Published private(set) var stickMode: DashStickMode = .map
+
     init(location: LocationService = .shared,
          tripMeter: TripMeterManager = .shared,
          compass: CompassManager = .shared,
@@ -107,6 +111,36 @@ final class RideSessionManager: ObservableObject {
             .scan((DashboardConnectionState.wifiDisconnected, DashboardConnectionState.wifiDisconnected)) { ($0.1, $1) }
             .sink { [weak self] pair in self?.handle(dashboardFrom: pair.0, to: pair.1) }
             .store(in: &cancellables)
+
+        dashboard.buttonEvents
+            .sink { [weak self] button in self?.handle(button: button) }
+            .store(in: &cancellables)
+    }
+
+    // MARK: Dash control stick
+
+    /// Routes a bike control-stick press. When the stick drives the map (default),
+    /// left/right zoom and down recenters; Click flips to music control, where
+    /// left/right change track and down toggles play/pause. iOS does not let apps
+    /// set the system volume level, so the stick changes track and play state
+    /// rather than a raw volume slider.
+    private func handle(button: DashButton) {
+        switch button {
+        case .click:
+            stickMode = (stickMode == .map) ? .music : .map
+            alerts.post(.dashboard, key: "stick-mode", priority: .info,
+                        title: stickMode == .map ? "Stick: Map zoom" : "Stick: Music",
+                        message: stickMode == .map
+                            ? "Left/right zoom the map, down recenters."
+                            : "Left/right change track, down plays or pauses.",
+                        symbol: stickMode == .map ? "plus.magnifyingglass" : "music.note", autoDismiss: 4)
+        case .right:
+            stickMode == .map ? google.zoomIn() : music.next()
+        case .left:
+            stickMode == .map ? google.zoomOut() : music.previous()
+        case .down:
+            stickMode == .map ? google.recenter() : music.togglePlayPause()
+        }
     }
 
     // MARK: Screen visibility (controls sensors while not recording)

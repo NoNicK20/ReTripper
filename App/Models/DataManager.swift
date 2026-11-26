@@ -109,6 +109,20 @@ class DataManager: ObservableObject {
         save()
     }
 
+    func updateFuelLog(_ updated: FuelLog) {
+        guard updated.liters > 0, updated.odometer >= 0, updated.totalCost >= 0 else { return }
+        guard let idx = fuelLogs.firstIndex(where: { $0.id == updated.id }) else { return }
+        fuelLogs[idx] = updated
+        fuelLogs.sort { $0.date > $1.date }
+        updateOdometerIfHigher(updated.odometer)
+        save()
+    }
+
+    func deleteFuelLog(id: UUID) {
+        fuelLogs.removeAll { $0.id == id }
+        save()
+    }
+
     func deleteFuelLog(at offsets: IndexSet) {
         fuelLogs.remove(atOffsets: offsets)
         save()
