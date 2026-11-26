@@ -147,6 +147,66 @@ class DataManager: ObservableObject {
         save()
     }
 
+    // MARK: - Import / export / backup
+
+    /// Import fuel fills from CSV text (Fuelio or ReTripper format). Additive:
+    /// a fill that matches an existing one (same odometer, same day) is skipped,
+    /// so re-importing the same file won't create duplicates.
+    @discardableResult
+    func importFuelCSV(_ text: String) -> (imported: Int, skipped: Int) {
+        let incoming = FuelCSV.parse(text)
+        var imported = 0
+        var skipped = 0
+        for var log in incoming {
+            let duplicate = fuelLogs.contains {
+                abs($0.odometer - log.odometer) < 0.5 && Calendar.current.isDate($0.date, inSameDayAs: log.date)
+            }
+            if duplicate { skipped += 1; continue }
+            log.id = UUID()
+            fuelLogs.append(log)
+            imported += 1
+        }
+        if imported > 0 {
+            fuelLogs.sort { $0.date > $1.date }
+            updateOdometerIfHigher(fuelLogs.map(\.odometer).max() ?? 0)
+            save()
+        }
+        return (imported, skipped)
+    }
+
+    /// Current fuel fills as CSV text for export/sharing.
+    func fuelLogsCSV() -> String {
+        FuelCSV.export(fuelLogs, odometerUnit: distanceUnit.shortLabel)
+    }
+
+    /// A full-app backup (everything the app stores) as JSON, in the same format
+    /// the app saves on device — a restore reproduces the app exactly.
+    func backupData() -> Data? {
+        let payload = StoragePayload(
+            motorcycle: motorcycle,
+            fuelLogs: fuelLogs,
+            maintenanceLogs: maintenanceLogs,
+            rideLogs: rideLogs,
+            distanceUnit: distanceUnit
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        return try? encoder.encode(payload)
+    }
+
+    /// Replace all stored data with the contents of a backup file.
+    @discardableResult
+    func restoreBackup(from data: Data) -> Bool {
+        guard let payload = try? JSONDecoder().decode(StoragePayload.self, from: data) else { return false }
+        if let m = payload.motorcycle { motorcycle = m }
+        fuelLogs = payload.fuelLogs ?? []
+        maintenanceLogs = payload.maintenanceLogs ?? []
+        rideLogs = payload.rideLogs ?? []
+        if let u = payload.distanceUnit { distanceUnit = u }
+        save()
+        return true
+    }
+
     // MARK: - Aggregations
 
     /// Odometer to show the rider: the highest reading they have entered in the

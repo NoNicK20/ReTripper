@@ -8,11 +8,22 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MileageView: View {
     @EnvironmentObject private var dataManager: DataManager
     @State private var showingEntrySheet = false
     @State private var editingFill: FuelLog?
+
+    // Import / export / backup
+    @State private var showCSVImporter = false
+    @State private var showCSVExporter = false
+    @State private var showBackupImporter = false
+    @State private var showBackupExporter = false
+    @State private var csvExportText = ""
+    @State private var backupData = Data()
+    @State private var transferMessage: String?
+    @State private var pendingRestore: Data?
 
     private let dateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -119,6 +130,83 @@ struct MileageView: View {
             .sheet(item: $editingFill) { fill in
                 MileageEntrySheet(editing: fill)
             }
+            .fileImporter(isPresented: $showCSVImporter,
+                          allowedContentTypes: [.commaSeparatedText, .plainText, .text],
+                          allowsMultipleSelection: false) { result in
+                handleCSVImport(result)
+            }
+            .fileExporter(isPresented: $showCSVExporter,
+                          document: MileageCSVDocument(text: csvExportText),
+                          contentType: .commaSeparatedText,
+                          defaultFilename: "ReTripper-Mileage") { _ in }
+            .fileExporter(isPresented: $showBackupExporter,
+                          document: BackupDocument(data: backupData),
+                          contentType: .json,
+                          defaultFilename: backupFilename) { _ in }
+            .fileImporter(isPresented: $showBackupImporter,
+                          allowedContentTypes: [.json],
+                          allowsMultipleSelection: false) { result in
+                handleBackupPick(result)
+            }
+            .alert("Restore backup?", isPresented: Binding(get: { pendingRestore != nil },
+                                                           set: { if !$0 { pendingRestore = nil } })) {
+                Button("Cancel", role: .cancel) { pendingRestore = nil }
+                Button("Replace all data", role: .destructive) {
+                    if let data = pendingRestore, dataManager.restoreBackup(from: data) {
+                        transferMessage = "Backup restored."
+                    } else {
+                        transferMessage = "That file couldn't be read as a ReTripper backup."
+                    }
+                    pendingRestore = nil
+                }
+            } message: {
+                Text("This replaces all current fills, service records, rides and your bike profile with the backup's contents. It can't be undone.")
+            }
+            .alert("Import & backup",
+                   isPresented: Binding(get: { transferMessage != nil }, set: { if !$0 { transferMessage = nil } })) {
+                Button("OK", role: .cancel) { transferMessage = nil }
+            } message: {
+                Text(transferMessage ?? "")
+            }
+        }
+    }
+
+    private func handleCSVImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let text = try String(contentsOf: url, encoding: .utf8)
+                let outcome = dataManager.importFuelCSV(text)
+                if outcome.imported == 0 && outcome.skipped == 0 {
+                    transferMessage = "No fuel fills were found in that file."
+                } else {
+                    transferMessage = "Imported \(outcome.imported) fill\(outcome.imported == 1 ? "" : "s")"
+                        + (outcome.skipped > 0 ? ", skipped \(outcome.skipped) already in your log." : ".")
+                }
+            } catch {
+                transferMessage = "Couldn't read that file: \(error.localizedDescription)"
+            }
+        case .failure(let error):
+            transferMessage = "Import cancelled: \(error.localizedDescription)"
+        }
+    }
+
+    private func handleBackupPick(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let data = try? Data(contentsOf: url) {
+                pendingRestore = data
+            } else {
+                transferMessage = "Couldn't read that backup file."
+            }
+        case .failure(let error):
+            transferMessage = "Restore cancelled: \(error.localizedDescription)"
         }
     }
 
@@ -134,6 +222,7 @@ struct MileageView: View {
                     .tracking(1.2)
             }
             Spacer()
+            dataMenu
             Button(action: { showingEntrySheet = true }) {
                 HStack(spacing: 5) {
                     Image(systemName: "plus")
@@ -149,6 +238,41 @@ struct MileageView: View {
             }
         }
         .padding(.top, 8)
+    }
+
+    private var dataMenu: some View {
+        Menu {
+            Section("Mileage (CSV)") {
+                Button { showCSVImporter = true } label: { Label("Import from CSV", systemImage: "square.and.arrow.down") }
+                Button {
+                    csvExportText = dataManager.fuelLogsCSV()
+                    showCSVExporter = true
+                } label: { Label("Export to CSV", systemImage: "square.and.arrow.up") }
+                .disabled(dataManager.fuelLogs.isEmpty)
+            }
+            Section("All app data") {
+                Button {
+                    backupData = dataManager.backupData() ?? Data()
+                    showBackupExporter = true
+                } label: { Label("Save backup file", systemImage: "externaldrive.badge.plus") }
+                Button(role: .destructive) { showBackupImporter = true } label: {
+                    Label("Restore from backup", systemImage: "arrow.counterclockwise")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(Theme.textSecondary)
+                .frame(width: 36, height: 36)
+        }
+        .accessibilityLabel("Import, export and backup")
+    }
+
+    private var backupFilename: String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd-HHmm"
+        return "ReTripper-Backup-\(df.string(from: Date()))"
     }
 
     private var emptyState: some View {
