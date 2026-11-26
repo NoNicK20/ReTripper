@@ -80,8 +80,8 @@ private struct RideModeContent: View {
                 }
 
                 // Layer 2: overlays inside the safe area.
-                VStack(spacing: 8) {
-                    VStack(spacing: 8) {
+                VStack(spacing: 6) {
+                    VStack(spacing: 6) {
                         topBar
                         Picker("Panel", selection: $panel) {
                             ForEach(RidePanel.allCases) { Text($0.rawValue).tag($0) }
@@ -105,7 +105,7 @@ private struct RideModeContent: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
 
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         if panel == .map {
                             if let diag = google.lastRouteDiagnostic {
                                 Text(diag)
@@ -190,12 +190,12 @@ private struct RideModeContent: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(RideFormat.speedKmh(tripMeter.currentSpeedMps))
-                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+                    .font(.system(size: 24, weight: .heavy, design: .rounded))
                     .foregroundColor(Theme.textPrimary)
                     .monospacedDigit()
                 Text("km/h").font(.system(size: 11, weight: .bold)).foregroundColor(Theme.textSecondary)
             }
-            .padding(.horizontal, 10).frame(minHeight: 40)
+            .padding(.horizontal, 10).frame(minHeight: 36)
             .background(Color.black.opacity(0.85)).clipShape(Capsule())
 
             Button { showingAudio = true } label: {

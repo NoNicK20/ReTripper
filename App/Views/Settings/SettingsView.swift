@@ -18,12 +18,12 @@ struct SettingsView: View {
                 Theme.background.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 14) {
                         // Header
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("SETTINGS")
-                                    .font(.system(size: 24, weight: .black, design: .rounded))
+                                    .font(.system(size: 22, weight: .black, design: .rounded))
                                     .foregroundColor(Theme.textPrimary)
                                 Text("PREFERENCES & SYSTEM")
                                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -44,7 +44,7 @@ struct SettingsView: View {
 
                             SettingsRow(title: "Bike", value: dataManager.motorcycle.displayName)
                             SettingsRow(title: "Odometer",
-                                        value: String(format: "%.0f %@", dataManager.motorcycle.currentOdometer, dataManager.distanceUnit.shortLabel))
+                                        value: String(format: "%.0f %@", dataManager.displayOdometer, dataManager.distanceUnit.shortLabel))
 
                             Button(action: { showingEditMotorcycle = true }) {
                                 HStack(spacing: 6) {
@@ -63,7 +63,7 @@ struct SettingsView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
                         }
-                        .darkCard(padding: 16)
+                        .darkCard(padding: 14)
 
                         // Preferences: Distance Units
                         VStack(alignment: .leading, spacing: 14) {
@@ -88,56 +88,7 @@ struct SettingsView: View {
                                 }
                             }
                         }
-                        .darkCard(padding: 16)
-
-                        // App Profile & Identity
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("PRODUCT IDENTITY")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(Theme.textTertiary)
-                                .tracking(1.2)
-
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Theme.surfaceSecondary)
-                                        .frame(width: 44, height: 44)
-                                    Circle()
-                                        .fill(Theme.apexRed)
-                                        .frame(width: 14, height: 14)
-                                }
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("ReTripper Companion")
-                                        .font(.system(size: 15, weight: .bold))
-                                        .foregroundColor(Theme.textPrimary)
-                                    Text("Tuned for Royal Enfield Guerrilla 450 Apex Red")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(Theme.textSecondary)
-                                }
-                            }
-
-                            Text("A premium, offline-first companion application engineered with pure black aesthetics, Apex Red accents, and complete user privacy.")
-                                .font(.system(size: 12))
-                                .foregroundColor(Theme.textTertiary)
-                                .padding(.top, 4)
-                        }
-                        .darkCard(padding: 16)
-
-                        // Privacy & Architecture
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("ARCHITECTURE & PRIVACY")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundColor(Theme.textTertiary)
-                                .tracking(1.2)
-
-                            SettingsRow(title: "Architecture", value: "Native Swift & SwiftUI")
-                            SettingsRow(title: "Platform Target", value: "iOS 17.0+")
-                            SettingsRow(title: "Data Storage", value: "Local Device Sandbox")
-                            SettingsRow(title: "Cloud & Network", value: "No tracking; maps use Apple/Google")
-                            SettingsRow(title: "Version", value: "1.0 (Build 1)")
-                        }
-                        .darkCard(padding: 16)
+                        .darkCard(padding: 14)
 
                         // Ride Mode reminders & integrations
                         RideSettingsSection(alerts: ContextualAlertManager.shared,
@@ -164,7 +115,7 @@ struct SettingsView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
                         }
-                        .darkCard(padding: 16)
+                        .darkCard(padding: 14)
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 32)

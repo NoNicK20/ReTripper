@@ -22,7 +22,7 @@ struct HomeView: View {
                 Theme.background.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 14) {
                         // Branding Header
                         BrandHeader()
 
@@ -80,8 +80,8 @@ struct HomeView: View {
                         RecentActivityList(activities: dataManager.recentActivities)
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 32)
+                    .padding(.top, 8)
+                    .padding(.bottom, 28)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)

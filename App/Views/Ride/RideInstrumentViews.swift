@@ -32,7 +32,7 @@ struct RideMetric: View {
             RideLabel(text: label)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(value)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
                     .foregroundColor(Theme.textPrimary)
                     .monospacedDigit()
                     .lineLimit(1)
@@ -56,13 +56,13 @@ struct BigRideButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: symbol).font(.system(size: 18, weight: .bold))
-                Text(title).font(.system(size: 15, weight: .heavy))
+            HStack(spacing: 7) {
+                Image(systemName: symbol).font(.system(size: 16, weight: .bold))
+                Text(title).font(.system(size: 14, weight: .heavy))
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
             .foregroundColor(Theme.textPrimary)
-            .frame(maxWidth: .infinity, minHeight: 56)
+            .frame(maxWidth: .infinity, minHeight: 46)
             .background(filled ? Theme.apexRed : Theme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: Theme.smallCornerRadius, style: .continuous))
         }
@@ -247,7 +247,7 @@ struct NowPlayingCard: View {
                     Image(systemName: "music.note").font(.system(size: 20)).foregroundColor(Theme.textTertiary)
                 }
             }
-            .frame(width: 48, height: 48)
+            .frame(width: 42, height: 42)
             .background(Theme.surfaceElevated)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
@@ -279,15 +279,15 @@ struct NowPlayingCard: View {
                 mediaButton("forward.fill") { music.next() }
             }
         }
-        .darkCard(padding: 10)
+        .darkCard(padding: 8)
     }
 
     private func mediaButton(_ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundColor(Theme.textPrimary)
-                .frame(width: 46, height: 46)
+                .frame(width: 40, height: 40)
                 .background(Theme.surfaceElevated)
                 .clipShape(Circle())
         }

@@ -89,14 +89,14 @@ struct DirectionCard: View {
         if let p = navigation.progress, navigation.status.isActive {
             HStack(spacing: 12) {
                 Image(systemName: p.nextManeuver.symbolName)
-                    .font(.system(size: 34, weight: .heavy))
+                    .font(.system(size: 30, weight: .heavy))
                     .foregroundColor(Theme.textPrimary)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 48, height: 48)
                     .background(Theme.apexRed)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(RideFormat.distance(p.distanceToNextManeuverMeters))
-                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .font(.system(size: 22, weight: .heavy, design: .rounded))
                         .foregroundColor(Theme.textPrimary)
                         .monospacedDigit()
                     Text(p.nextInstruction)
@@ -106,7 +106,7 @@ struct DirectionCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(10)
+            .padding(8)
             .background(Color.black.opacity(0.92))
             .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous).stroke(Theme.border, lineWidth: 1))
@@ -145,7 +145,7 @@ struct RouteSummaryStrip: View {
             RideMetric(label: "TRIP A", value: String(format: "%.1f", unit == .miles ? km / 1.609344 : km), unit: unit.shortLabel)
             RideMetric(label: "MOVING", value: TripMetrics.formatDuration(tripMeter.tripA.metrics.movingSeconds))
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(.horizontal, 12).padding(.vertical, 6)
         .background(Color.black.opacity(0.9))
         .clipShape(RoundedRectangle(cornerRadius: Theme.smallCornerRadius, style: .continuous))
     }

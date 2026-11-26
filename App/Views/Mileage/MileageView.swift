@@ -39,7 +39,7 @@ struct MileageView: View {
                 Theme.background.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 14) {
                         header
 
                         // Mileage summary
@@ -73,7 +73,7 @@ struct MileageView: View {
                                     .foregroundColor(Theme.textTertiary)
                             }
                         }
-                        .darkCard(padding: 16)
+                        .darkCard(padding: 14)
 
                         // Fill history or empty state
                         if dataManager.fuelLogs.isEmpty {
@@ -85,21 +85,25 @@ struct MileageView: View {
                                     .foregroundColor(Theme.textTertiary)
                                     .tracking(1.2)
 
-                                Text("Tap a fill to edit or delete it.")
+                                Text("Tap a fill to edit it, or swipe left to delete.")
                                     .font(.system(size: 11))
                                     .foregroundColor(Theme.textTertiary)
 
                                 ForEach(dataManager.fuelLogs) { fill in
-                                    Button { editingFill = fill } label: {
-                                        FuelFillCard(
-                                            fill: fill,
-                                            unit: unit,
-                                            economyUnit: economyUnit,
-                                            economy: intervalsByFill[fill.id]?.economy,
-                                            dateString: dateFormatter.string(from: fill.date)
-                                        )
+                                    SwipeToDeleteRow(cornerRadius: Theme.smallCornerRadius) {
+                                        dataManager.deleteFuelLog(id: fill.id)
+                                    } content: {
+                                        Button { editingFill = fill } label: {
+                                            FuelFillCard(
+                                                fill: fill,
+                                                unit: unit,
+                                                economyUnit: economyUnit,
+                                                economy: intervalsByFill[fill.id]?.economy,
+                                                dateString: dateFormatter.string(from: fill.date)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
                             }
                         }
@@ -122,7 +126,7 @@ struct MileageView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("MILEAGE")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.system(size: 22, weight: .black, design: .rounded))
                     .foregroundColor(Theme.textPrimary)
                 Text("FUEL & ECONOMY LOG")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))

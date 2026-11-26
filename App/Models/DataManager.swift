@@ -148,6 +148,15 @@ class DataManager: ObservableObject {
     }
 
     // MARK: - Aggregations
+
+    /// Odometer to show the rider: the highest reading they have entered in the
+    /// Mileage log, falling back to the motorcycle's stored reading when no fuel
+    /// fills exist. A real odometer only climbs, so the highest reading is the
+    /// latest one.
+    var displayOdometer: Double {
+        max(fuelLogs.map(\.odometer).max() ?? 0, motorcycle.currentOdometer)
+    }
+
     var recentActivities: [ActivityItem] {
         var items: [ActivityItem] = []
 
