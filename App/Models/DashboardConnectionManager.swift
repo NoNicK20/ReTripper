@@ -121,6 +121,23 @@ class DashboardConnectionManager: ObservableObject {
         projection.$state
             .sink { [weak self] s in self?.projectionState = s }
             .store(in: &cancellables)
+
+        // The dash's own Navigation page waits for the phone to project; if
+        // the rider activates it with the stick before (or after) projection
+        // is up, start it so the page shows the map instead of timing out.
+        dashLink.buttonEvents
+            .sink { [weak self] _ in self?.startProjectionIfNeeded() }
+            .store(in: &cancellables)
+    }
+
+    /// Start the map projection if the dash is connected and nothing is
+    /// streaming yet (idle or previously failed). A no-op while projecting.
+    private func startProjectionIfNeeded() {
+        guard dashLink.state.isConnected, let projection else { return }
+        switch projection.state {
+        case .idle, .failed: projection.start()
+        case .starting, .projecting: break
+        }
     }
 
     /// Start or stop streaming the ReTripper map to the dash screen.
@@ -149,7 +166,7 @@ class DashboardConnectionManager: ObservableObject {
             diagnosticMessage = dashLink.lastMessage ?? "Connected to the dashboard."
             // Put the map on the dash as soon as it's connected — no need to
             // press Start map. The rider can still stop/restart it manually.
-            if let projection, projection.state == .idle { projection.start() }
+            startProjectionIfNeeded()
         case .failed(let message):
             isVerifyingSession = false
             // A dash-session failure doesn't drop the Wi-Fi association.
