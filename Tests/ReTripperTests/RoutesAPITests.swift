@@ -80,4 +80,18 @@ final class RoutesAPIParsingTests: XCTestCase {
         XCTAssertTrue(restricted.localizedCaseInsensitiveContains("allowed APIs")
                       || restricted.localizedCaseInsensitiveContains("restrict"), restricted)
     }
+
+    func testHTTP429MessagesExposeTheRealCause() {
+        let billing = RoutesAPIError.describeHTTP(code: 429,
+            googleMessage: "Billing has not been enabled for this project.")
+        XCTAssertTrue(billing.localizedCaseInsensitiveContains("billing"), billing)
+
+        let rate = RoutesAPIError.describeHTTP(code: 429,
+            googleMessage: "Quota exceeded: requests per minute per user.")
+        XCTAssertTrue(rate.localizedCaseInsensitiveContains("minute"), rate)
+
+        // Unknown 429 still passes Google's own words through to the rider.
+        let other = RoutesAPIError.describeHTTP(code: 429, googleMessage: "Unexpected quota state.")
+        XCTAssertTrue(other.localizedCaseInsensitiveContains("Unexpected quota state"), other)
+    }
 }

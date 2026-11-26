@@ -62,7 +62,22 @@ enum RoutesAPIError: Error, LocalizedError, Equatable {
             }
             return "Routing was denied (403). Check the key's API restrictions and that Routes API is on."
         case 429:
-            return "Routing usage limit reached (429). Try again later."
+            // A 429 on an otherwise-working key is almost always an account
+            // setting, not real traffic. Google's own message usually says which,
+            // so surface it instead of hiding it behind "try again later".
+            if googleMessage.localizedCaseInsensitiveContains("billing") {
+                return "Google blocked routing because billing isn't enabled on your Google Cloud project. "
+                    + "Routes API needs a billing account linked (Google still gives free monthly usage, "
+                    + "but a card must be on file). Enable billing in Google Cloud, then try again."
+            }
+            if googleMessage.localizedCaseInsensitiveContains("per minute")
+                || googleMessage.localizedCaseInsensitiveContains("per user")
+                || googleMessage.localizedCaseInsensitiveContains("rate") {
+                return "Too many route requests in a short time (429). Wait a minute and try again."
+            }
+            return "Google's routing quota was hit (429). Check billing is enabled and the Routes API quota "
+                + "in Google Cloud isn't set to 0."
+                + (googleMessage.isEmpty ? "" : " Google said: \(googleMessage)")
         default:
             return "Routing failed (HTTP \(code))." + (googleMessage.isEmpty ? "" : " \(googleMessage)")
         }
