@@ -108,6 +108,10 @@ final class GoogleNavigationController: NSObject, ObservableObject {
     private var offRouteStreak = 0
     private static let offRouteMeters: CLLocationDistance = 45
 
+    /// A route the rider asked for before a GPS fix was available. We start
+    /// location updates, then compute the route as soon as the first fix lands.
+    private var pendingPreviewStops: [Destination]?
+
     override init() {
         super.init()
         guidanceLocation.delegate = self
@@ -197,10 +201,13 @@ final class GoogleNavigationController: NSObject, ObservableObject {
                                              routeFailed: "Google Maps isn't ready. \(status.summary)"))
             return
         }
-        guard let origin = mapView.myLocation?.coordinate else {
-            lastRouteDiagnostic = "Waiting for your location (GPS)…"
-            onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
-                                             routeFailed: "Waiting for your location. Make sure location access is on and GPS has a fix, then try again."))
+        guard let origin = resolveOrigin() else {
+            // No fix yet. Instead of failing, remember the request, turn on
+            // location, and compute the route the moment the first fix arrives.
+            pendingPreviewStops = stops
+            lastRouteDiagnostic = "Getting your location (GPS)… this can take a few seconds."
+            guidanceLocation.requestWhenInUseAuthorization()
+            guidanceLocation.startUpdatingLocation()
             return
         }
         guard let last = stops.last else { return }
@@ -220,6 +227,14 @@ final class GoogleNavigationController: NSObject, ObservableObject {
                 self.applyRouteFailure(error)
             }
         }
+    }
+
+    /// The rider's current position, from the map's own location or, if the map
+    /// hasn't reported one yet, the device location manager's last fix.
+    private func resolveOrigin() -> CLLocationCoordinate2D? {
+        if let c = mapView?.myLocation?.coordinate { return c }
+        if let c = guidanceLocation.location?.coordinate, CLLocationCoordinate2DIsValid(c) { return c }
+        return nil
     }
 
     /// Prefer a two-wheeler route (apt for the motorcycle, and offered in Royal
@@ -310,6 +325,17 @@ final class GoogleNavigationController: NSObject, ObservableObject {
     /// Called ~1 Hz with the rider's position while guiding. Emits the same
     /// update shape the UI already consumes, and triggers a reroute when the
     /// rider drifts off the line.
+    /// First stop for every GPS fix: fulfil a route the rider asked for before a
+    /// fix was available, then feed live guidance (a no-op when not guiding).
+    private func onLocationFix(_ coord: CLLocationCoordinate2D, course: CLLocationDirection) {
+        if let stops = pendingPreviewStops {
+            pendingPreviewStops = nil
+            if !guiding { guidanceLocation.stopUpdatingLocation() }
+            previewRoute(stops: stops)
+        }
+        handleGuidanceLocation(coord, course: course)
+    }
+
     private func handleGuidanceLocation(_ coord: CLLocationCoordinate2D, course: CLLocationDirection) {
         guard guiding else { return }
         let bearing = course >= 0 ? course : 0
@@ -424,7 +450,30 @@ extension GoogleNavigationController: CLLocationManagerDelegate {
         guard let loc = locations.last else { return }
         let coord = loc.coordinate
         let course = loc.course
-        Task { @MainActor in self.handleGuidanceLocation(coord, course: course) }
+        Task { @MainActor in self.onLocationFix(coord, course: course) }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        Task { @MainActor in
+            guard self.pendingPreviewStops != nil else { return }
+            self.pendingPreviewStops = nil
+            self.lastRouteDiagnostic = "Couldn't get your location (GPS). Go outdoors or check location access, then try again."
+            self.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
+                routeFailed: "Couldn't get your GPS position. Make sure location access is allowed and you have a clear view of the sky, then try again."))
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+        Task { @MainActor in
+            guard self.pendingPreviewStops != nil else { return }
+            if status == .denied || status == .restricted {
+                self.pendingPreviewStops = nil
+                self.lastRouteDiagnostic = "Location access is off, so routing can't start."
+                self.onUpdate?(GoogleNavigationUpdate(isRerouting: false, arrived: false,
+                    routeFailed: "ReTripper needs location access to route from where you are. Turn it on in Settings, then try again."))
+            }
+        }
     }
 }
 
