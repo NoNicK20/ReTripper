@@ -26,14 +26,18 @@ import Foundation
 final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelegate {
 
     let frameSize = CGSize(width: 526, height: 300)
-    /// Higher than the tile-refresh rate: tiles update ~1 Hz but the frame is
-    /// re-rendered from the smoothed position every tick so panning is fluid.
-    let targetFps = 15
+    /// MUST stay 4: the Tripper dash decoder fragments the picture above
+    /// ~12 fps (and the extra RTP packets get lost, collapsing the stream).
+    /// Matches the stock RE app / TripperDash++ stream shape. The frame is
+    /// still re-rendered from the smoothed position every tick, so panning
+    /// stays fluid between the ~1 Hz GPS fixes even at 4 fps.
+    let targetFps = 4
     var zoom = 16
 
     /// How far the smoothed position/heading moves toward the latest GPS fix
-    /// each frame (0–1). Small = smoother but laggier.
-    private let smoothing = 0.2
+    /// each frame (0–1), tuned for 4 fps: ~4 frames between GPS fixes, so a
+    /// higher factor keeps up without jumping.
+    private let smoothing = 0.45
 
     /// World-pixel radius that must be covered so the rotated 526×300 frame
     /// never shows a corner gap, plus a tile of margin.
