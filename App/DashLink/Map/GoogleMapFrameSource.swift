@@ -184,6 +184,13 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
                                   bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
                                             | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
 
+        // Flip the Y axis ONCE so the whole drawing path is y-DOWN with the
+        // origin at the top-left — the orientation the Tripper dash reads the
+        // frame in. TripperDash++'s proven renderer does exactly this; without
+        // it the map comes out upside-down / mirrored on the dash.
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: 1, y: -1)
+
         // Dark background.
         ctx.setFillColor(CGColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
@@ -196,21 +203,19 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
 
         let headingUp = DashMapDefaults.headingUp
 
-        // Context is y-up; "up" (+y) is the top of the frame. The rider sits
-        // at the frame centre. For heading-up, rotate the map CCW by the
-        // heading so the travel direction points up; the rider chevron then
-        // stays pointing up. For north-up, the map isn't rotated and the
-        // chevron rotates to the heading instead.
+        // y-down: +y is DOWN the frame. World-pixel y also increases south, so
+        // a tile/route point's screen y is just (worldY - originY) — north ends
+        // up at the top. originY is the world-y at the top (north) edge.
         let c = WebMercator.worldPixel(coord, zoom: zoom)
-        let originX = c.x - Double(w) / 2         // world px at screen-left (pre-rotation)
-        let originY = c.y - Double(h) / 2         // world px at screen-top
+        let originX = c.x - Double(w) / 2         // world-x at the left edge
+        let originY = c.y - Double(h) / 2         // world-y at the top (north) edge
         let ts = WebMercator.tileSize
         let r = tileRange(center: c)
 
         ctx.saveGState()
         if headingUp {
             ctx.translateBy(x: Double(w) / 2, y: Double(h) / 2)
-            ctx.rotate(by: renderHeading * .pi / 180.0)   // y-up CCW = heading-up
+            ctx.rotate(by: -renderHeading * .pi / 180.0)   // y-down heading-up
             ctx.translateBy(x: -Double(w) / 2, y: -Double(h) / 2)
         }
         var anyTile = false
@@ -220,16 +225,12 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
                       let img = tileMirror[.init(z: zoom, x: wk.x, y: wk.y)] else { continue }
                 anyTile = true
                 let sx = Double(tx) * ts - originX
-                let imgTopScreen = Double(ty) * ts - originY
-                ctx.saveGState()
-                ctx.translateBy(x: sx, y: Double(h) - imgTopScreen)   // tile top-left in y-up ctx
-                ctx.scaleBy(x: 1, y: -1)                              // draw image upright
-                ctx.draw(img, in: CGRect(x: 0, y: 0, width: ts, height: ts))
-                ctx.restoreGState()
+                let sy = Double(ty) * ts - originY            // y-down tile top
+                drawImageUpright(img, in: CGRect(x: sx, y: sy, width: ts, height: ts), ctx: ctx)
             }
         }
         // Route line sits on the map, so it's drawn inside the same transform.
-        drawRouteLine(in: ctx, originX: originX, originY: originY, height: h)
+        drawRouteLine(in: ctx, originX: originX, originY: originY)
         ctx.restoreGState()
 
         if !anyTile {
@@ -239,18 +240,28 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
             drawRiderMarker(in: ctx, center: CGPoint(x: Double(w) / 2, y: Double(h) / 2),
                             headingUp: headingUp)
         }
-        // Turn banner is screen-space, always upright on top of everything.
+        // Turn banner (screen-space, always upright) on top of everything.
         drawManeuverBanner(in: ctx, width: w, height: h)
         emit(buffer)
     }
 
+    /// Draw a CGImage upright in the y-down context (a plain `ctx.draw` would
+    /// render it upside down there).
+    private func drawImageUpright(_ image: CGImage, in rect: CGRect, ctx: CGContext) {
+        ctx.saveGState()
+        ctx.translateBy(x: rect.minX, y: rect.maxY)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
+        ctx.restoreGState()
+    }
+
     /// Draws the active navigation route (if any) in the current map transform.
-    private func drawRouteLine(in ctx: CGContext, originX: Double, originY: Double, height h: Int) {
+    private func drawRouteLine(in ctx: CGContext, originX: Double, originY: Double) {
         let coords = DashRouteStore.shared.snapshot.coords
         guard coords.count >= 2 else { return }
         let points = coords.map { coord -> CGPoint in
             let wp = WebMercator.worldPixel(coord, zoom: zoom)
-            return CGPoint(x: wp.x - originX, y: Double(h) - (wp.y - originY))
+            return CGPoint(x: wp.x - originX, y: wp.y - originY)   // y-down
         }
         ctx.setLineJoin(.round)
         ctx.setLineCap(.round)
@@ -269,15 +280,13 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
         guard snap.hasRoute, !snap.maneuver.isEmpty else { return }
         let text = "\(Self.arrow(for: snap.maneuver))  \(Self.distanceText(snap.distanceToManeuver))"
         let bannerH: CGFloat = 34
-        let rect = CGRect(x: 8, y: CGFloat(h) - bannerH - 8, width: CGFloat(w) - 16, height: bannerH)
+        let rect = CGRect(x: 8, y: 8, width: CGFloat(w) - 16, height: bannerH)   // top in y-down
         let path = CGPath(roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil)
         ctx.addPath(path)
         ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.62))
         ctx.fillPath()
-        let line = makeLine(text, fontSize: 19)
-        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-        ctx.textPosition = CGPoint(x: rect.minX + 14, y: rect.minY + 10)
-        CTLineDraw(line, ctx)
+        drawText(text, at: CGPoint(x: rect.minX + 14, y: rect.midY + 6), fontSize: 19,
+                 color: CGColor(red: 1, green: 1, blue: 1, alpha: 1), in: ctx)
     }
 
     private static func arrow(for maneuver: String) -> String {
@@ -295,15 +304,15 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
     private func drawRiderMarker(in ctx: CGContext, center: CGPoint, headingUp: Bool) {
         ctx.saveGState()
         ctx.translateBy(x: center.x, y: center.y)
-        // Heading-up: map is rotated, so the rider always points up (no
-        // rotation). North-up: rotate the chevron to the heading (clockwise =
-        // negative in a y-up context).
-        if !headingUp { ctx.rotate(by: -renderHeading * .pi / 180.0) }
+        // y-down. Heading-up: the map is already rotated, so the chevron stays
+        // pointing up. North-up: rotate the chevron to the heading (CW is
+        // positive in a y-down context).
+        if !headingUp { ctx.rotate(by: renderHeading * .pi / 180.0) }
         ctx.beginPath()
-        ctx.move(to: CGPoint(x: 0, y: 16))              // apex points "up" (north when heading 0)
-        ctx.addLine(to: CGPoint(x: -11, y: -12))
-        ctx.addLine(to: CGPoint(x: 0, y: -5))
-        ctx.addLine(to: CGPoint(x: 11, y: -12))
+        ctx.move(to: CGPoint(x: 0, y: -16))             // apex points up (−y)
+        ctx.addLine(to: CGPoint(x: -11, y: 12))
+        ctx.addLine(to: CGPoint(x: 0, y: 5))
+        ctx.addLine(to: CGPoint(x: 11, y: 12))
         ctx.closePath()
         ctx.setFillColor(apexRed)
         ctx.fillPath()
@@ -320,9 +329,24 @@ final class GoogleMapFrameSource: NSObject, FrameSource, CLLocationManagerDelega
             line = makeLine(string, fontSize: fontSize)
         }
         let bounds = CTLineGetImageBounds(line, ctx)
-        ctx.setFillColor(CGColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1))
-        ctx.textPosition = CGPoint(x: max(12, (size.width - bounds.width) / 2), y: size.height / 2 - 6)
+        drawText(string, at: CGPoint(x: max(12, (size.width - bounds.width) / 2), y: size.height / 2 + 6),
+                 fontSize: fontSize,
+                 color: CGColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1), in: ctx)
+    }
+
+    /// Draw one line of text upright in the y-down context (glyphs would be
+    /// upside down otherwise). `point` is the baseline origin in y-down space.
+    private func drawText(_ string: String, at point: CGPoint, fontSize: CGFloat,
+                          color: CGColor, in ctx: CGContext) {
+        let line = makeLine(string, fontSize: fontSize)
+        ctx.saveGState()
+        ctx.textMatrix = .identity
+        ctx.translateBy(x: point.x, y: point.y)
+        ctx.scaleBy(x: 1, y: -1)          // flip glyphs upright for the y-down frame
+        ctx.textPosition = .zero
+        ctx.setFillColor(color)
         CTLineDraw(line, ctx)
+        ctx.restoreGState()
     }
 
     private func makeLine(_ string: String, fontSize: CGFloat) -> CTLine {
